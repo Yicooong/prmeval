@@ -1,0 +1,27 @@
+dataset:
+  name: rbm-1m-ood
+  adapter: processed_cache
+  root: null  # or set PRMEVAL_PROCESSED_DATASETS_PATH
+  max_trajectories: 30
+
+sampling:
+  eval_types: [reward_alignment]
+  max_frames: 8
+  pad_frames: false
+  progress_type: absolute_first_frame
+
+baseline:
+  name: rbm
+  transport: specialized
+  base_url: http://rbm-service.example.com
+  api_key_env: RBM_API_KEY
+  # Robometer is the evaluated model name; PRMEval is the framework name.
+  model: robometer-4b
+  timeout_seconds: 120
+  max_retries: 5
+  max_concurrency: 8
+
+metrics: [reward_alignment]
+output_dir: evaluation_output
+run_name: rbm-1m-ood-rbm
+resume: true

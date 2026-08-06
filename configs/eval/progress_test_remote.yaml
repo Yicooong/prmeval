@@ -1,0 +1,33 @@
+dataset:
+  name: rbm-1m-ood
+  adapter: processed_cache
+  root: null  # Set this path or PRMEVAL_PROCESSED_DATASETS_PATH.
+  max_trajectories: 2
+
+sampling:
+  eval_types: [reward_alignment]
+  max_frames: 4
+  pad_frames: false
+  progress_type: absolute_first_frame
+
+baseline:
+  name: progress_test
+  transport: openai_chat
+  base_url: http://token.pjlab.org.cn/v1
+  api_key_env: OPENAI_API_KEY
+  model: kimi-k2.6
+  timeout_seconds: 120
+  max_retries: 0
+  max_concurrency: 1
+  temperature: 0
+  # Reasoning models consume this budget before producing the final JSON content.
+  max_tokens: 12800
+  options: {}
+  # To override the default prompt, use placeholders {task} and {num_frames}:
+  # options:
+  #   prompt: "Task: {task}. Return {num_frames} progress values in [0,1]."
+
+metrics: [reward_alignment]
+output_dir: evaluation_output
+run_name: progress-test-smoke
+resume: true

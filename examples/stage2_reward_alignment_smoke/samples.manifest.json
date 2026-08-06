@@ -1,0 +1,40 @@
+{
+  "schema_version": "prmeval.sample-manifest.v1",
+  "fingerprint": "a7784aa0d8c36c6208da816fa99398fb160671114f68bbe91408699c566373e1",
+  "created_at": "2026-08-06T06:24:09.166874+00:00",
+  "dataset": {
+    "name": "stage2-progress-smoke",
+    "adapter": "jsonl",
+    "root": ".",
+    "paths": [
+      "tests/fixtures/stage2_progress_smoke_source.jsonl"
+    ],
+    "max_trajectories": 3
+  },
+  "sampling": {
+    "eval_types": [
+      "reward_alignment"
+    ],
+    "max_frames": 3,
+    "pad_frames": false,
+    "progress_type": "absolute_first_frame",
+    "random_seed": 42,
+    "num_examples_per_quality": 5,
+    "num_partial_successes": null,
+    "max_tasks": null,
+    "comparisons_per_task": null,
+    "max_comparisons": null,
+    "trajectories_per_source": null
+  },
+  "summary": {
+    "schema_version": "bench.record.v1",
+    "samples": 3,
+    "eval_types": {
+      "reward_alignment": 3
+    },
+    "path": "examples/stage2_reward_alignment_smoke/samples.jsonl",
+    "trajectories": 3,
+    "fingerprint": "a7784aa0d8c36c6208da816fa99398fb160671114f68bbe91408699c566373e1",
+    "reused": false
+  }
+}

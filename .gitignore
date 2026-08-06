@@ -1,0 +1,39 @@
+.vscode/
+# Secrets and local environment overrides
+.env
+.env.*
+!.env.example
+
+# Python bytecode and tool caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Python packaging artifacts
+build/
+dist/
+*.egg-info/
+
+# Evaluation and debugging outputs
+evaluation_output/
+outputs/
+baseline_eval_output/
+*.tmp
+*.partial
+
+# Legacy local environments and generated caches
+.venv/
+.venv-robodopamine/
+unsloth_compiled_cache/
+venv_robodopamine.txt
+
+# Editor and operating-system temporary files
+.DS_Store
+*.swp
+*.swo
+*.npz

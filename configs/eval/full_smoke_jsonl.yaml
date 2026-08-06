@@ -1,0 +1,30 @@
+dataset:
+  name: jsonl-full-smoke
+  adapter: jsonl
+  root: .
+  paths: [tests/fixtures/stage2_progress_smoke_source.jsonl]
+  max_trajectories: 1
+
+sampling:
+  eval_types: [reward_alignment]
+  max_frames: 3
+  pad_frames: false
+  progress_type: absolute_first_frame
+
+baseline:
+  name: progress_test
+  transport: openai_chat
+  base_url: BASE_URL
+  api_key_env: OPENAI_API_KEY
+  model: MODEL_ID
+  timeout_seconds: 120
+  max_retries: 0
+  max_concurrency: 1
+  temperature: 0
+  max_tokens: 12800
+  options: {}
+
+metrics: [reward_alignment]
+output_dir: evaluation_output
+run_name: jsonl-progress-full-smoke
+resume: false
