@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class DatasetConfig(BaseModel):
@@ -39,8 +39,7 @@ class BaselineConfig(BaseModel):
     transport: Literal["openai_chat", "specialized"] | None = None
     base_url: str
     api_key: str | None = None
-    api_key_env: str | None = None
-    model: str
+    model_id: str
     model_version: str | None = None
     timeout_seconds: float = Field(default=120.0, gt=0)
     max_retries: int = Field(default=5, ge=0)
@@ -50,9 +49,21 @@ class BaselineConfig(BaseModel):
     headers: dict[str, str] = Field(default_factory=dict)
     options: dict[str, Any] = Field(default_factory=dict)
 
-    def resolved_api_key(self) -> str | None:
-        return self.api_key or (os.environ.get(self.api_key_env) if self.api_key_env else None)
-
+    @model_validator(mode="before")
+    @classmethod
+    def resolve_environment_values(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        resolved = dict(data)
+        for field in ("base_url", "api_key", "model_id"):
+            value = resolved.get(field)
+            if not value:
+                continue
+            if value in os.environ:
+                resolved[field] = os.environ[value]
+            elif value.isidentifier() and value.isupper():
+                raise ValueError(f"Environment variable {value!r} configured by baseline.{field} is missing")
+        return resolved
 
 class EvalConfig(BaseModel):
     dataset: DatasetConfig

@@ -52,7 +52,7 @@ class SpecializedBaseline(RemoteBaseline):
     def predict(self, sample: EvaluationSample):
         if isinstance(sample, ProgressSample):
             request = SpecializedRequest(
-                model=self.config.model,
+                model=self.config.model_id,
                 request_id=sample.sample_id,
                 prediction_type=self.progress_prediction_type,
                 task=sample.trajectory.task,
@@ -61,7 +61,7 @@ class SpecializedBaseline(RemoteBaseline):
             )
         elif isinstance(sample, PreferenceSample):
             request = SpecializedRequest(
-                model=self.config.model,
+                model=self.config.model_id,
                 request_id=sample.sample_id,
                 prediction_type="preference",
                 task=sample.chosen_trajectory.task,

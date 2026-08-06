@@ -40,10 +40,12 @@ all_metrics.json + 分数据集结果
 
 ## 安装
 
-推荐使用现有的 `bench` Conda 环境：
+推荐在项目目录中创建独立的虚拟环境：
 
 ```bash
-conda activate bench
+python -m venv .venv
+source .venv/bin/activate  # Windows PowerShell: .venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
 pip install -e .
 ```
 
@@ -65,10 +67,10 @@ prmeval-eval --help
 prmeval-data-preprocess --help
 ```
 
-只有在处理 Hugging Face 数据、解码视频或生成可视化时，才需要安装可选依赖：
+如需生成可视化，请安装可视化可选依赖：
 
 ```bash
-pip install -e '.[data,viz]'
+pip install -e '.[viz]'
 ```
 
 开发和测试依赖：
@@ -77,7 +79,7 @@ pip install -e '.[data,viz]'
 pip install -e '.[dev]'
 ```
 
-核心运行依赖为 `httpx`、`numpy`、`pydantic` 和 `pyyaml`，支持 Python 3.10 及以上版本。
+默认安装包含远程请求、数据处理和视频解码所需依赖，支持 Python 3.10 及以上版本。
 
 ## 快速开始：完整冒烟测试
 
@@ -92,43 +94,46 @@ metric = reward_alignment
 
 配置文件为 [full_smoke_jsonl.yaml](configs/eval/full_smoke_jsonl.yaml)。它只读取一条 trajectory，并发起一次远程模型请求。
 
-先设置 API Key：
+先设置 OpenAI-compatible 服务的 API Key、地址和模型 ID：
 
 ```bash
-conda activate bench
 export OPENAI_API_KEY='你的 API Key'
+export BASE_URL='https://your-service.example.com/v1'
+export MODEL_ID='your-model-id'
 ```
+
+配置中的 `base_url`、`api_key` 和 `model_id` 可以直接填写环境变量名。初始化 `BaselineConfig` 时会读取并保存对应值；环境变量不存在时会直接报错。无需认证的服务可以省略 `api_key`。
 
 依次执行三个阶段：
 
 ```bash
 # Stage 1：从 JSONL 数据集采样
 python -m prmeval.cli sample \
-  --config configs/eval/full_smoke_jsonl.yaml
+  --config configs/eval/test_stage.yaml
 
 python -m prmeval.cli validate-samples \
   --samples evaluation_output/jsonl-progress-full-smoke/samples.jsonl
 
 # Stage 2：调用 progress_test
 python -m prmeval.cli infer \
-  --config configs/eval/full_smoke_jsonl.yaml
+  --config configs/eval/test_stage.yaml
 
 python -m prmeval.cli validate-predictions \
   --predictions evaluation_output/jsonl-progress-full-smoke/predictions.jsonl
 
 # Stage 3：计算 reward_alignment
 python -m prmeval.cli metrics \
-  --config configs/eval/full_smoke_jsonl.yaml
+  --config configs/eval/test_stage.yaml
 ```
 
 也可以使用便捷命令连续执行三阶段：
 
 ```bash
 python -m prmeval.cli run \
-  --config configs/eval/full_smoke_jsonl.yaml
+  --config configs/eval/test_stage.yaml
 ```
 
-详细说明和当前实测结果见 [完整冒烟测试说明](examples/full_pipeline_smoke/README.md)。测试帧只用于验证数据协议、图片编码、远程调用和结果落盘，不代表真实机器人场景。
+详细说明和当前实测结果见 [完整冒烟测试说明](examples/stage_full_smoke/README.md)。测试帧只用于验证数据协议、图片编码、远程调用和结果落盘，不代表真实机器人场景。
 
 ## 配置文件
 
@@ -139,7 +144,7 @@ dataset:
   name: jsonl-full-smoke
   adapter: jsonl
   root: .
-  paths: [tests/fixtures/stage2_progress_smoke_source.jsonl]
+  paths: [examples/stage_1_smoke/trajectories.jsonl]
   max_trajectories: 1
 
 sampling:
@@ -151,9 +156,9 @@ sampling:
 baseline:
   name: progress_test
   transport: openai_chat
-  base_url: http://your-service/v1
-  api_key_env: OPENAI_API_KEY
-  model: your-model-name
+  base_url: BASE_URL
+  api_key: OPENAI_API_KEY
+  model_id: MODEL_ID
   timeout_seconds: 120
   max_retries: 0
   max_concurrency: 1
@@ -314,18 +319,22 @@ Stage 2 只接收 `EvaluationRecord(stage="sampled")`。它加载 NPZ 帧，调�
 
 成功结果写入 `predictions.jsonl`，失败结果写入 `errors.jsonl`。progress 输出数量与输入帧数不一致时，该样本会被记录为失败。
 
-### API Key
+### 服务连接配置
 
 推荐在配置中只保存环境变量名：
 
 ```yaml
-api_key_env: OPENAI_API_KEY
+base_url: BASE_URL
+api_key: OPENAI_API_KEY
+model_id: MODEL_ID
 ```
 
 运行前设置：
 
 ```bash
 export OPENAI_API_KEY='你的 API Key'
+export BASE_URL='https://your-service.example.com/v1'
+export MODEL_ID='your-model-id'
 ```
 
 框架会自动发送：
@@ -334,7 +343,7 @@ export OPENAI_API_KEY='你的 API Key'
 Authorization: Bearer <API Key>
 ```
 
-不要把真实 Key 写入配置或提交到 Git。CLI 当前不会自动读取 `.env`；VS Code 的 `envFile` 配置可以读取项目根目录 `.env`。
+字段也可以直接填写公开的 URL 或模型 ID；全大写标识符会被视为环境变量名。不要把真实 Key、私有服务地址或内部模型 ID 写入配置并提交到 Git。CLI 当前不会自动读取 `.env`；VS Code 的 `envFile` 配置可以读取项目根目录 `.env`。
 
 ### progress_test baseline
 
@@ -418,7 +427,7 @@ evaluation.dataset.name : baseline.name
 
 ```bash
 python -m prmeval.cli compute-metrics \
-  --predictions examples/metrics_smoke/predictions.jsonl \
+  --predictions examples/stage_3_smoke/predictions.jsonl \
   --metrics reward_alignment \
   --output /tmp/prmeval-metrics.json
 ```
@@ -473,11 +482,13 @@ summary = Evaluator(config).run()
 
 ## 调试建议
 
-VS Code 中选择 `bench` 环境：
+VS Code 中选择项目虚拟环境的 Python 解释器：
 
 ```text
-/mnt/shared-storage-user/liuyicong/miniconda3/envs/bench/bin/python
+.venv/bin/python
 ```
+
+Windows 上对应路径为 `.venv\Scripts\python.exe`。
 
 Stage 2 使用 `ThreadPoolExecutor`。即使 `max_concurrency: 1`，模型调用仍运行在工作线程中。建议在以下位置设置断点：
 
@@ -528,10 +539,9 @@ tests/               单元测试、contract test 和 golden fixture
 
 ## 测试
 
-在 `bench` 环境运行现有测试：
+在已激活的项目虚拟环境中运行现有测试：
 
 ```bash
-conda activate bench
 PYTHONPATH=. python -m unittest tests.test_evaluation -v
 ```
 

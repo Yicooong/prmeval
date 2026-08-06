@@ -10,24 +10,25 @@
 配置文件为 `configs/eval/full_smoke_jsonl.yaml`。测试只读取一条 trajectory，并只发起一次远程模型请求。
 
 ```bash
-conda activate bench
 export OPENAI_API_KEY='your-key'
+export BASE_URL='https://your-service.example.com/v1'
+export MODEL_ID='your-model-id'
 
 # Stage 1
 python -m prmeval.cli sample \
-  --config configs/eval/full_smoke_jsonl.yaml
+  --config configs/eval/test_stage.yaml
 python -m prmeval.cli validate-samples \
   --samples evaluation_output/jsonl-progress-full-smoke/samples.jsonl
 
 # Stage 2
 python -m prmeval.cli infer \
-  --config configs/eval/full_smoke_jsonl.yaml
+  --config configs/eval/test_stage.yaml
 python -m prmeval.cli validate-predictions \
   --predictions evaluation_output/jsonl-progress-full-smoke/predictions.jsonl
 
 # Stage 3
 python -m prmeval.cli metrics \
-  --config configs/eval/full_smoke_jsonl.yaml
+  --config configs/eval/test_stage.yaml
 ```
 
 所有运行产物位于 `evaluation_output/jsonl-progress-full-smoke/`。该目录是中间产物，已由 `.gitignore` 忽略。

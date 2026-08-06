@@ -113,7 +113,7 @@ class OpenAIChatBaseline(RemoteBaseline):
 
     def _chat(self, messages: list[dict[str, Any]], schema: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
         payload = {
-            "model": self.config.model,
+            "model": self.config.model_id,
             "messages": messages,
             "temperature": self.config.temperature,
             "max_tokens": self.config.max_tokens,
@@ -150,7 +150,7 @@ class OpenAIChatBaseline(RemoteBaseline):
             return ProgressPrediction(
                 sample_id=sample.sample_id,
                 progress=values,
-                model=self.config.model,
+                model=self.config.model_id,
                 model_version=self.config.model_version,
                 raw_response=raw,
             )
@@ -165,7 +165,7 @@ class OpenAIChatBaseline(RemoteBaseline):
                 sample_id=sample.sample_id,
                 chosen_probability=float(parsed["probability_a"]),
                 preference=label,
-                model=self.config.model,
+                model=self.config.model_id,
                 model_version=self.config.model_version,
                 raw_response=raw,
             )

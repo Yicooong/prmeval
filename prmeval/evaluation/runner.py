@@ -122,7 +122,7 @@ class Evaluator:
         attempts: int = 1,
     ) -> EvaluationRecord:
         normalized = None
-        model = self.config.baseline.model
+        model = self.config.baseline.model_id
         version = self.config.baseline.model_version
         if isinstance(prediction, ProgressPrediction):
             model = prediction.model

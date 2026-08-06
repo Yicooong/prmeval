@@ -8,8 +8,8 @@ Run all metrics found in the file:
 
 ```bash
 prmeval-eval compute-metrics \
-  --predictions examples/metrics_smoke/predictions.jsonl \
-  --output examples/metrics_smoke/metrics.json
+  --predictions examples/stage_3_smoke/predictions.jsonl \
+  --output examples/stage_3_smoke/metrics.json
 ```
 
 The expected headline values are:

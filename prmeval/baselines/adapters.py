@@ -16,7 +16,7 @@ def _prediction(sample, values, config, raw):
     return ProgressPrediction(
         sample_id=sample.sample_id,
         progress=[float(v) for v in values],
-        model=config.model,
+        model=config.model_id,
         model_version=config.model_version,
         raw_response=raw,
     )
@@ -121,7 +121,7 @@ class RLVLMFRemote(OpenAIChatBaseline):
             preference, chosen_probability = "rejected", probability_a if chosen_first else 1 - probability_a
         return PreferencePrediction(
             sample_id=sample.sample_id, chosen_probability=chosen_probability, preference=preference,
-            model=self.config.model, model_version=self.config.model_version, raw_response=raw,
+            model=self.config.model_id, model_version=self.config.model_version, raw_response=raw,
         )
 
 

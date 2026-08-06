@@ -11,21 +11,22 @@
 先验证 Stage 2 输入及 NPZ 校验和：
 
 ```bash
-conda activate bench
 python -m prmeval.cli validate-samples \
-  --samples examples/stage2_reward_alignment_smoke/samples.jsonl
-```
+  --samples examples/stage_2_smoke/samples.jsonl
+```s
 
 调用 `progress_test` baseline：
 
 ```bash
 export OPENAI_API_KEY='your-key'
+export BASE_URL='https://your-service.example.com/v1'
+export MODEL_ID='your-model-id'
 python -m prmeval.cli infer \
-  --config configs/eval/progress_test_smoke.yaml \
-  --samples examples/stage2_reward_alignment_smoke/samples.jsonl \
+  --config configs/eval/test_stage.yaml \
+  --samples examples/stage_2_smoke/samples.jsonl \
   --output evaluation_output/progress-test-smoke/predictions.jsonl
 ```
 
-在运行前，需要把配置中的 `base_url` 和 `model` 改成真实的 OpenAI-compatible 服务地址和模型名。
+配置加载时会从环境变量展开服务地址和模型 ID。
 
 这三组图像只是彩色像素组成的协议测试帧，用于验证 bundle 加载、Base64 图片构造、API 调用、structured output 和结果落盘，不用于评价模型语义能力。

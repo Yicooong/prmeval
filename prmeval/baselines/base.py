@@ -33,7 +33,7 @@ class RemoteBaseline(ABC):
 
     def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json", **self.config.headers}
-        key = self.config.resolved_api_key()
+        key = self.config.api_key
         if key:
             headers["Authorization"] = f"Bearer {key}"
         return headers
@@ -72,7 +72,7 @@ class RemoteBaseline(ABC):
 
     def model_info(self) -> dict[str, Any]:
         return {
-            "model": self.config.model,
+            "model": self.config.model_id,
             "model_version": self.config.model_version,
             "base_url": self.config.base_url,
             "transport": self.transport,

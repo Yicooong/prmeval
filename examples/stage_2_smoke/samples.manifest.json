@@ -7,7 +7,7 @@
     "adapter": "jsonl",
     "root": ".",
     "paths": [
-      "tests/fixtures/stage2_progress_smoke_source.jsonl"
+      "examples/stage_1_smoke/trajectories.jsonl"
     ],
     "max_trajectories": 3
   },
@@ -32,7 +32,7 @@
     "eval_types": {
       "reward_alignment": 3
     },
-    "path": "examples/stage2_reward_alignment_smoke/samples.jsonl",
+    "path": "examples/stage_2_smoke/samples.jsonl",
     "trajectories": 3,
     "fingerprint": "a7784aa0d8c36c6208da816fa99398fb160671114f68bbe91408699c566373e1",
     "reused": false

@@ -27,7 +27,7 @@ from prmeval.metrics.builtins import compute_metrics
 
 PIXEL = "data:image/jpeg;base64,/9j/2Q=="
 GOLDEN_FIXTURE = Path(__file__).parent / "fixtures" / "rbm_1m_ood_micro.jsonl"
-METRICS_SMOKE_FIXTURE = Path(__file__).parents[1] / "examples" / "metrics_smoke" / "predictions.jsonl"
+METRICS_SMOKE_FIXTURE = Path(__file__).parents[1] / "examples" / "stage_3_smoke" / "predictions.jsonl"
 
 
 class _MockResponse:
@@ -70,6 +70,44 @@ class _BodyResponse:
 
 
 class FrameworkTest(unittest.TestCase):
+    def test_baseline_config_resolves_environment_variables(self):
+        config_text = """
+dataset: {name: fixture, adapter: jsonl}
+baseline:
+  name: remote
+  base_url: BASE_URL
+  api_key: OPENAI_API_KEY
+  model_id: MODEL_ID
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.yaml"
+            path.write_text(config_text, encoding="utf-8")
+            with patch.dict(
+                "os.environ",
+                {"BASE_URL": "https://example.com/v1", "OPENAI_API_KEY": "secret", "MODEL_ID": "model"},
+            ):
+                config = EvalConfig.from_yaml(path)
+                self.assertEqual(config.baseline.base_url, "https://example.com/v1")
+                self.assertEqual(config.baseline.api_key, "secret")
+                self.assertEqual(config.baseline.model_id, "model")
+            with patch.dict("os.environ", {}, clear=True):
+                with self.assertRaisesRegex(ValueError, "BASE_URL"):
+                    EvalConfig.from_yaml(path)
+                with self.assertRaisesRegex(ValueError, "MODEL_ID"):
+                    BaselineConfig(name="remote", base_url="https://example.com/v1", model_id="MODEL_ID")
+
+        explicit = BaselineConfig(
+            name="remote", base_url="https://explicit.example/v1",
+            api_key="explicit-key", model_id="explicit-model",
+        )
+        with patch.dict(
+            "os.environ",
+            {"BASE_URL": "https://env.example/v1", "OPENAI_API_KEY": "env-key", "MODEL_ID": "env-model"},
+        ):
+            self.assertEqual(explicit.base_url, "https://explicit.example/v1")
+            self.assertEqual(explicit.api_key, "explicit-key")
+            self.assertEqual(explicit.model_id, "explicit-model")
+
     def test_local_dataset_preparation_helpers(self):
         frames = np.arange(10 * 2 * 2 * 3, dtype=np.uint8).reshape(10, 2, 2, 3)
         self.assertEqual(_uniform_indices(10, 4).tolist(), [0, 3, 6, 9])
@@ -140,7 +178,7 @@ class FrameworkTest(unittest.TestCase):
 
     def test_specialized_adapter_contract(self):
         baseline = SpecializedBaseline(BaselineConfig(
-            name="rbm", base_url="http://service/v1", model="rbm-model", max_retries=0
+            name="rbm", base_url="http://service/v1", model_id="rbm-model", max_retries=0
         ))
         sample = ProgressSample(
             sample_id="sample-id", eval_type="reward_alignment",
@@ -243,7 +281,7 @@ class FrameworkTest(unittest.TestCase):
 
     def test_openai_parse_retry_and_v1_url(self):
         baseline = OpenAIChatBaseline(BaselineConfig(
-            name="test", base_url="http://service/v1", model="model", max_retries=1
+            name="test", base_url="http://service/v1", model_id="model", max_retries=1
         ))
         responses = [
             _BodyResponse({"choices": [{"message": {"content": "not json"}}]}),
@@ -263,7 +301,7 @@ class FrameworkTest(unittest.TestCase):
     def test_progress_test_baseline_uses_default_prompt_and_exact_schema(self):
         baseline = create_baseline(BaselineConfig(
             name="progress_test", transport="openai_chat", base_url="http://service/v1",
-            model="test-vlm", max_retries=0,
+            model_id="test-vlm", max_retries=0,
         ))
         sample = ProgressSample(
             sample_id="progress-test-1",
@@ -312,7 +350,7 @@ class FrameworkTest(unittest.TestCase):
                     baseline=BaselineConfig(
                         name="gvl",
                         base_url="http://mock-service",
-                        model="mock-vlm",
+                        model_id="mock-vlm",
                         max_retries=0,
                     ),
                     output_dir=str(root / "output"),
@@ -327,7 +365,7 @@ class FrameworkTest(unittest.TestCase):
                 self.assertEqual(_MockResponse.calls, 1)
 
                 changed = config.model_copy(deep=True)
-                changed.baseline.model = "different-model"
+                changed.baseline.model_id = "different-model"
                 with self.assertRaises(RuntimeError):
                     Evaluator(changed).run()
 
@@ -341,7 +379,7 @@ class FrameworkTest(unittest.TestCase):
                 ),
                 sampling=SamplingConfig(eval_types=["reward_alignment"], max_frames=3),
                 baseline=BaselineConfig(
-                    name="gvl", base_url="http://mock-service", model="mock-vlm", max_retries=0,
+                    name="gvl", base_url="http://mock-service", model_id="mock-vlm", max_retries=0,
                 ),
                 output_dir=tmp,
                 run_name="stages",
@@ -386,7 +424,7 @@ class FrameworkTest(unittest.TestCase):
                     paths=[GOLDEN_FIXTURE.name],
                 ),
                 sampling=SamplingConfig(eval_types=["reward_alignment"], max_frames=3),
-                baseline=BaselineConfig(name="gvl", base_url="http://unused", model="unused"),
+                baseline=BaselineConfig(name="gvl", base_url="http://unused", model_id="unused"),
                 output_dir=tmp,
                 run_name="tamper",
             )
@@ -406,7 +444,7 @@ class FrameworkTest(unittest.TestCase):
                     paths=[GOLDEN_FIXTURE.name],
                 ),
                 sampling=SamplingConfig(eval_types=["reward_alignment"], max_frames=3),
-                baseline=BaselineConfig(name="gvl", base_url="http://service", model="mock", max_retries=0),
+                baseline=BaselineConfig(name="gvl", base_url="http://service", model_id="mock", max_retries=0),
                 output_dir=tmp,
                 run_name="recovery",
             )

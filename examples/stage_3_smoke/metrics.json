@@ -1,5 +1,5 @@
 {
-  "source": "examples/metrics_smoke/predictions.jsonl",
+  "source": "examples/stage_3_smoke/predictions.jsonl",
   "num_records": 12,
   "metrics": {
     "confusion_matrix": {
