@@ -16,6 +16,7 @@ class Trajectory(FrameworkModel):
     task: str
     frames: Any
     data_source: str = "unknown"
+    is_robot: bool = False
     quality_label: str | None = None
     partial_success: float | None = None
     preference_group_id: str | None = None

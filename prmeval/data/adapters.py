@@ -36,6 +36,7 @@ def _trajectory_from_mapping(item: dict, root: Path | None = None) -> Trajectory
         task=str(item.get("task") or ""),
         frames=frames,
         data_source=str(item.get("data_source") or "unknown"),
+        is_robot=bool(item.get("is_robot", False)),
         quality_label=item.get("quality_label"),
         partial_success=item.get("partial_success"),
         preference_group_id=item.get("preference_group_id"),

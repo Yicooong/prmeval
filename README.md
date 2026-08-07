@@ -4,6 +4,8 @@ PRMEval 是一个面向机器人任务进度与偏好模型的远程评测框架
 
 当前仓库只保留评测相关能力，不包含数据集上传、模型训练、FSDP、本地 checkpoint 加载或本地模型服务。通用远程模型通过 OpenAI-compatible API 调用；具有专用输出头的模型使用统一的 `/v1/evaluations` 协议。
 
+仓库中的 [`dataset_unify`](dataset_unify/) 是独立的数据统一工具：它将异构原始数据转换为本地标准 Hugging Face Dataset，供 PRMEval 后续预处理和读取。它不参与评测，也不会上传数据或生成语言向量。
+
 ## 核心设计
 
 评测被拆成三个可以独立运行和验证的阶段：
@@ -37,6 +39,17 @@ all_metrics.json + 分数据集结果
 - Stage 3 只读取推理成功的 Record，不加载图片，也不调用模型。
 
 完整数据流见 [三阶段协议说明](docs/PIPELINE.md)，字段定义见 [EvaluationRecord 数据结构](docs/RECORD_SCHEMA.md)。
+
+原始数据尚未标准化时，完整链路为：
+
+```text
+原始数据集
+    -> dataset_unify
+    -> 本地 Hugging Face Dataset
+    -> prmeval-data-preprocess
+    -> processed_cache adapter
+    -> Stage 1 / Stage 2 / Stage 3
+```
 
 ## 安装
 
@@ -92,7 +105,7 @@ baseline = progress_test
 metric = reward_alignment
 ```
 
-配置文件为 [full_smoke_jsonl.yaml](configs/eval/full_smoke_jsonl.yaml)。它只读取一条 trajectory，并发起一次远程模型请求。
+配置文件为 [test_stage.yaml](configs/eval/test_stage.yaml)。它只读取一条 trajectory，并发起一次远程模型请求。
 
 先设置 OpenAI-compatible 服务的 API Key、地址和模型 ID：
 
@@ -183,6 +196,70 @@ resume: false
 | `resume` | Stage 1/2 | 是否复用同配置结果并跳过成功样本 |
 
 目前三个阶段共用一个 `EvalConfig`，因此单独运行 Stage 1 时配置中仍需保留 `baseline` 块，但 Stage 1 不会读取 API Key，也不会调用模型。
+
+## 原始数据集统一
+
+[`dataset_unify`](dataset_unify/) 与 `prmeval` Python 包保持单向数据边界：转换工具只向本地写入标准 Dataset，PRMEval 只读取转换和预处理后的产物，不直接依赖各数据集 loader。
+
+统一 Dataset 的标准字段为：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `id` | `str` | 唯一轨迹 ID |
+| `task` | `str` | 自然语言任务描述 |
+| `data_source` | `str` | 数据来源 |
+| `frames` | `str` | 相对于最终 Dataset 根目录的本地 MP4 路径 |
+| `is_robot` | `bool` | 是否为机器人轨迹 |
+| `quality_label` | `str \| None` | `successful`、`suboptimal` 或 `failure` 等标签 |
+| `partial_success` | `float \| None` | `[0, 1]` 范围内的完成度 |
+
+其中不包含 `lang_vector` 或其他文本 embedding。loader 可以在转换过程中使用数组、视频字节或延迟加载函数，但落盘前必须通过 `build_standard_dataset()` 生成固定的 7 字段 Dataset。转换器生成的 `frames` 统一相对于 `output.output_dir/<dataset_name>/`，避免预处理时重复拼接数据集名称。
+
+当前转换链路只支持 `output.use_video: true`；`false` 会直接报错，避免生成与 PRMEval 不兼容的图片序列 Dataset。
+
+`prmeval-data-preprocess` 会把 MP4 解码并保存为 NPZ。它优先使用 PyAV，PyAV 不可用时回退到系统 `ffmpeg`/`ffprobe`。预处理后的 `processed_cache` adapter 会将标准字段转换为内部 `Trajectory`，其中 `is_robot` 会被完整保留。
+
+使用已有配置执行转换：
+
+```bash
+python -m dataset_unify.generate_hf_dataset \
+  --config_path=dataset_unify/configs/data_gen_configs/mit_franka_prank.yaml
+```
+
+转换结果只保存在 `output.output_dir/<dataset_name>/`，不会上传到 Hugging Face Hub。可以在交给 PRMEval 前验证字段：
+
+```bash
+python -m dataset_unify.validate_dataset \
+  /path/to/unified_datasets/<dataset_name>
+```
+
+随后创建一个预处理配置，将 `sources[].path` 指向这个本地 Dataset：
+
+```yaml
+output_dir: /path/to/processed_datasets
+max_frames: 32
+
+sources:
+  - path: /path/to/unified_datasets/<dataset_name>
+    cache_name: <dataset_name>
+```
+
+运行：
+
+```bash
+prmeval-data-preprocess --config configs/data/my_local_dataset.yaml
+```
+
+评测配置再通过 `processed_cache` adapter 使用生成的缓存：
+
+```yaml
+dataset:
+  name: <dataset_name>
+  adapter: processed_cache
+  root: /path/to/processed_datasets
+```
+
+支持的数据集配置、loader 内部接口和新增数据集步骤见 [`dataset_unify/README.md`](dataset_unify/README.md)。
 
 ## 本地数据格式与 Dataset Adapter
 
@@ -466,7 +543,7 @@ evaluation_output/<run_name>/
 ```python
 from prmeval import EvalConfig, Evaluator
 
-config = EvalConfig.from_yaml("configs/eval/full_smoke_jsonl.yaml")
+config = EvalConfig.from_yaml("configs/eval/test_stage.yaml")
 evaluator = Evaluator(config)
 
 sample_summary = evaluator.sample()
@@ -520,6 +597,8 @@ python -m prmeval.cli list-metrics
 ## 项目结构
 
 ```text
+dataset_unify/       独立的原始数据集统一与本地保存工具
+
 prmeval/
 ├── core/            配置、统一 Schema 和注册器
 ├── data/            dataset adapter、预处理、progress 与 sampler
@@ -543,6 +622,19 @@ tests/               单元测试、contract test 和 golden fixture
 
 ```bash
 PYTHONPATH=. python -m unittest tests.test_evaluation -v
+```
+
+数据统一到 PRMEval 的端到端 contract test 会真实生成 MP4，并依次验证本地 HF Dataset、预处理、`processed_cache` adapter 和 sampler：
+
+```bash
+python -m unittest tests.test_dataset_unify_contract -v
+```
+
+使用本项目的 bench 环境运行全部测试：
+
+```bash
+/mnt/shared-storage-user/liuyicong/miniconda3/envs/bench/bin/python \
+  -m unittest discover -s tests -v
 ```
 
 安装开发依赖后也可以运行：

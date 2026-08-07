@@ -12,6 +12,7 @@ import argparse
 import io
 import json
 import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -78,9 +79,50 @@ def _video_frames(value: Any, root: Path | None = None) -> np.ndarray:
 def _decode_video(source: Any) -> np.ndarray:
     try:
         import imageio.v3 as iio
-    except ImportError as exc:
-        raise RuntimeError("Video decoding requires the 'data' extra (imageio and av)") from exc
-    return np.asarray(list(iio.imiter(source, plugin="pyav")))
+        return np.asarray(list(iio.imiter(source, plugin="pyav")))
+    except (ImportError, OSError, RuntimeError, ValueError):
+        return _decode_video_with_ffmpeg(source)
+
+
+def _decode_video_with_ffmpeg(source: Any) -> np.ndarray:
+    """Decode a path or in-memory video with FFmpeg when PyAV is unavailable."""
+    if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
+        raise RuntimeError("Video decoding requires PyAV or the ffmpeg and ffprobe executables")
+
+    if isinstance(source, (str, Path)):
+        input_bytes = None
+        input_args = ["-i", str(source)]
+    elif isinstance(source, io.BytesIO):
+        input_bytes = source.getvalue()
+        input_args = ["-i", "pipe:0"]
+    else:
+        raise TypeError(f"FFmpeg fallback does not support video source {type(source)!r}")
+
+    probe = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            *input_args,
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=width,height",
+            "-of",
+            "csv=p=0:s=x",
+        ],
+        input=input_bytes,
+        capture_output=True,
+        check=True,
+    )
+    width, height = (int(value) for value in probe.stdout.decode().strip().split("x"))
+    decoded = subprocess.run(
+        ["ffmpeg", "-loglevel", "error", *input_args, "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1"],
+        input=input_bytes,
+        capture_output=True,
+        check=True,
+    )
+    return np.frombuffer(decoded.stdout, dtype=np.uint8).reshape(-1, height, width, 3)
 
 
 def _load_local_dataset(path: Path, subset: str | None, split: str):

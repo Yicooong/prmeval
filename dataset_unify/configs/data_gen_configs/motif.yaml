@@ -1,0 +1,15 @@
+# config.yaml
+dataset:
+  dataset_path: ./datasets/MotIF  # Root containing annotations/, human_motion/, stretch_motion/
+  dataset_name: motif_rfm
+
+output:
+  output_dir: ./robometer_dataset/motif_rfm
+  max_trajectories: -1
+  max_frames: 64
+  use_video: true
+  fps: 10
+  shortest_edge_size: 240
+  center_crop: false
+  num_workers: 4
+
