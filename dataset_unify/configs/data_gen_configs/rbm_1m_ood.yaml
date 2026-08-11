@@ -1,0 +1,13 @@
+dataset:
+  dataset_path: /mnt/xxx/rbm-1m-ood
+  dataset_name: rbm-1m-ood
+
+output:
+  output_dir: /mnt/xxx/hf_rbm_1m_ood_datasets
+  max_trajectories: -1
+  max_frames: 32
+  use_video: true
+  fps: 10
+  shortest_edge_size: 240
+  center_crop: false
+  num_workers: 1

@@ -706,6 +706,15 @@ def main(cfg: GenerateConfig):
             max_trajectories=cfg.output.max_trajectories,
         )
         trajectories = flatten_task_data(task_data)
+    elif "rbm-1m-ood" in cfg.dataset.dataset_name.lower():
+        from dataset_unify.dataset_loaders.rbm_1m_ood_loader import load_rbm_1m_ood_dataset
+
+        print(f"Loading RBM-1M-ODD dataset from: {cfg.dataset.dataset_path}")
+        task_data = load_rbm_1m_ood_dataset(
+            cfg.dataset.dataset_path,
+            max_trajectories=cfg.output.max_trajectories,
+        )
+        trajectories = flatten_task_data(task_data)
     else:
         raise ValueError(f"Unknown dataset type: {cfg.dataset.dataset_name}")
 
