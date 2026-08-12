@@ -40,6 +40,8 @@ dataset = build_standard_dataset(entries)
 ```text
 dataset_unify/
 ├── generate_hf_dataset.py       统一转换入口
+├── registry.py                  数据集转换器注册器
+├── converters.py                内置数据集转换器注册表
 ├── hf_schema.py                 固定的 7 字段 Dataset schema 与构造器
 ├── helpers.py                   视频与轨迹标准化工具
 ├── validate_dataset.py          本地 Dataset 字段校验
@@ -125,7 +127,8 @@ sampling:
 
 1. 在 `dataset_loaders/` 中创建 `{dataset_name}_loader.py`。
 2. 将源字段转换为至少包含 `id`、`task`、`frames`、`data_source`、`is_robot` 的轨迹字典。
-3. 在 `generate_hf_dataset.py` 中注册分发逻辑。
+3. 在 `converters.py` 中通过 `register_dataset_converter` 注册自定义转换函数，或使用文件中的
+   `_register_trajectory_converter` / `_register_direct_converter` 声明普通 loader 或流式 converter。
 4. 在 `configs/data_gen_configs/` 中添加本地配置。
 5. 执行转换和 `validate_dataset` 校验。
 
