@@ -8,17 +8,13 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
-class DatasetConfig(BaseModel):
-    name: str = "rbm-1m-ood"
-    adapter: str = "processed_cache"
-    root: str | None = None
-    paths: list[str] = Field(default_factory=list)
-    max_trajectories: int | None = None
-
-
 class SamplingConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    dataset_name: str = "rbm-1m-ood"
+    adapter: str = "huggingface"
+    paths: list[str] = Field(default_factory=list)
+    max_trajectories: int | None = Field(default=None, ge=1)
     eval_types: list[str] = Field(default_factory=lambda: ["reward_alignment"])
     max_frames: int = Field(default=8, ge=1)
     pad_frames: bool = False
@@ -65,8 +61,10 @@ class BaselineConfig(BaseModel):
                 raise ValueError(f"Environment variable {value!r} configured by baseline.{field} is missing")
         return resolved
 
+
 class EvalConfig(BaseModel):
-    dataset: DatasetConfig
+    model_config = ConfigDict(extra="forbid")
+
     sampling: SamplingConfig = Field(default_factory=SamplingConfig)
     baseline: BaselineConfig
     metrics: list[str] = Field(default_factory=list)

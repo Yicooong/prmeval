@@ -12,7 +12,7 @@ import numpy as np
 from prmeval.baselines.adapters import create_baseline
 from prmeval.baselines.openai import OpenAIChatBaseline, PROGRESS_SCHEMA
 from prmeval.baselines.specialized import SpecializedBaseline, SpecializedRequest, SpecializedResponse
-from prmeval.core.config import BaselineConfig, DatasetConfig, EvalConfig, SamplingConfig
+from prmeval.core.config import BaselineConfig, EvalConfig, SamplingConfig
 from prmeval.core.registry import Registry
 from prmeval.core.schemas import (
     EvaluationRecord, PreferencePrediction, ProgressPrediction, ProgressSample, Trajectory,
@@ -70,9 +70,30 @@ class _BodyResponse:
 
 
 class FrameworkTest(unittest.TestCase):
+    def test_dataset_loading_fields_belong_to_sampling_config(self):
+        config = EvalConfig(
+            sampling=SamplingConfig(
+                dataset_name="fixture",
+                adapter="jsonl",
+                paths=["trajectories.jsonl"],
+                max_trajectories=2,
+            ),
+            baseline=BaselineConfig(name="gvl", base_url="https://example.com", model_id="model"),
+        )
+
+        self.assertFalse(hasattr(config, "dataset"))
+        self.assertEqual(config.sampling.dataset_name, "fixture")
+        self.assertEqual(config.sampling.paths, ["trajectories.jsonl"])
+        self.assertEqual(config.sampling.max_trajectories, 2)
+        with self.assertRaises(ValueError):
+            EvalConfig.model_validate({
+                "dataset": {"name": "legacy", "adapter": "jsonl"},
+                "baseline": {"name": "gvl", "base_url": "https://example.com", "model_id": "model"},
+            })
+
     def test_baseline_config_resolves_environment_variables(self):
         config_text = """
-dataset: {name: fixture, adapter: jsonl}
+sampling: {dataset_name: fixture, adapter: jsonl}
 baseline:
   name: remote
   base_url: BASE_URL
@@ -342,11 +363,10 @@ baseline:
             with tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 config = EvalConfig(
-                    dataset=DatasetConfig(
-                        name="rbm-1m-ood-micro", adapter="jsonl", root=str(GOLDEN_FIXTURE.parent),
-                        paths=[GOLDEN_FIXTURE.name],
+                    sampling=SamplingConfig(
+                        dataset_name="rbm-1m-ood-micro", adapter="jsonl", paths=[str(GOLDEN_FIXTURE)],
+                        eval_types=["reward_alignment"], max_frames=3,
                     ),
-                    sampling=SamplingConfig(eval_types=["reward_alignment"], max_frames=3),
                     baseline=BaselineConfig(
                         name="gvl",
                         base_url="http://mock-service",
@@ -373,11 +393,10 @@ baseline:
         _MockResponse.calls = 0
         with tempfile.TemporaryDirectory() as tmp:
             config = EvalConfig(
-                dataset=DatasetConfig(
-                    name="rbm-1m-ood-micro", adapter="jsonl", root=str(GOLDEN_FIXTURE.parent),
-                    paths=[GOLDEN_FIXTURE.name],
+                sampling=SamplingConfig(
+                    dataset_name="rbm-1m-ood-micro", adapter="jsonl", paths=[str(GOLDEN_FIXTURE)],
+                    eval_types=["reward_alignment"], max_frames=3,
                 ),
-                sampling=SamplingConfig(eval_types=["reward_alignment"], max_frames=3),
                 baseline=BaselineConfig(
                     name="gvl", base_url="http://mock-service", model_id="mock-vlm", max_retries=0,
                 ),
@@ -419,11 +438,10 @@ baseline:
     def test_sample_bundle_detects_modified_frames(self):
         with tempfile.TemporaryDirectory() as tmp:
             config = EvalConfig(
-                dataset=DatasetConfig(
-                    name="rbm-1m-ood-micro", adapter="jsonl", root=str(GOLDEN_FIXTURE.parent),
-                    paths=[GOLDEN_FIXTURE.name],
+                sampling=SamplingConfig(
+                    dataset_name="rbm-1m-ood-micro", adapter="jsonl", paths=[str(GOLDEN_FIXTURE)],
+                    eval_types=["reward_alignment"], max_frames=3,
                 ),
-                sampling=SamplingConfig(eval_types=["reward_alignment"], max_frames=3),
                 baseline=BaselineConfig(name="gvl", base_url="http://unused", model_id="unused"),
                 output_dir=tmp,
                 run_name="tamper",
@@ -439,11 +457,10 @@ baseline:
     def test_failed_sample_is_retried_and_resolved(self):
         with tempfile.TemporaryDirectory() as tmp:
             config = EvalConfig(
-                dataset=DatasetConfig(
-                    name="rbm-1m-ood-micro", adapter="jsonl", root=str(GOLDEN_FIXTURE.parent),
-                    paths=[GOLDEN_FIXTURE.name],
+                sampling=SamplingConfig(
+                    dataset_name="rbm-1m-ood-micro", adapter="jsonl", paths=[str(GOLDEN_FIXTURE)],
+                    eval_types=["reward_alignment"], max_frames=3,
                 ),
-                sampling=SamplingConfig(eval_types=["reward_alignment"], max_frames=3),
                 baseline=BaselineConfig(name="gvl", base_url="http://service", model_id="mock", max_retries=0),
                 output_dir=tmp,
                 run_name="recovery",

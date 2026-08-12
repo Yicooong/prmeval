@@ -9,9 +9,8 @@ from pathlib import Path
 import numpy as np
 
 from dataset_unify.hf_schema import STANDARD_DATASET_FIELDS, build_standard_dataset
-from prmeval.core.config import DatasetConfig, SamplingConfig
-from prmeval.data.adapters import ProcessedCacheDatasetAdapter
-from prmeval.data.prepare import prepare_source
+from prmeval.core.config import SamplingConfig
+from prmeval.data.adapters import HuggingfaceDatasetAdapter
 from prmeval.data.samplers import RewardAlignmentSampler
 
 
@@ -79,7 +78,7 @@ class DatasetUnifyContractTest(unittest.TestCase):
         empty = build_standard_dataset([])
         self.assertEqual(tuple(empty.column_names), STANDARD_DATASET_FIELDS)
 
-    def test_local_video_reaches_processed_cache_and_sampler(self) -> None:
+    def test_local_video_reaches_huggingface_adapter_and_sampler(self) -> None:
         dataset_name = "contract_dataset"
         dataset_root = self.root / "unified" / dataset_name
         relative_video_path = Path("shard_0000") / "episode_000000" / "clip.mp4"
@@ -102,22 +101,18 @@ class DatasetUnifyContractTest(unittest.TestCase):
         ])
         unified.save_to_disk(str(dataset_root))
 
-        processed_root = self.root / "processed"
-        summary = prepare_source(
-            {"path": str(dataset_root), "cache_name": dataset_name},
-            processed_root,
-            max_frames=3,
-            force=False,
-        )
-
-        self.assertEqual(summary["trajectories"], 1)
-        adapter = ProcessedCacheDatasetAdapter(
-            DatasetConfig(name=dataset_name, adapter="processed_cache", root=str(processed_root))
+        adapter = HuggingfaceDatasetAdapter(
+            SamplingConfig(
+                dataset_name=dataset_name,
+                adapter="huggingface",
+                paths=[str(dataset_root)],
+            )
         )
         trajectories = list(adapter.load())
         self.assertEqual(len(trajectories), 1)
         self.assertTrue(trajectories[0].is_robot)
         self.assertEqual(trajectories[0].data_source, dataset_name)
+        self.assertEqual(trajectories[0].frames, str(dataset_root / relative_video_path))
 
         sampler = RewardAlignmentSampler(SamplingConfig(max_frames=2), dataset_name)
         samples = list(sampler.sample(trajectories))

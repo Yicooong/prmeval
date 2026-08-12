@@ -72,7 +72,7 @@ def main(argv: list[str] | None = None) -> int:
         print("\n".join(METRICS.names()))
     elif args.command == "validate-dataset":
         config = EvalConfig.from_yaml(args.config)
-        trajectories = list(create_dataset(config.dataset).load())
+        trajectories = list(create_dataset(config.sampling).load())
         print(json.dumps({"valid": True, "trajectories": len(trajectories)}, indent=2))
     elif args.command == "validate-samples":
         print(json.dumps(validate_sample_artifacts(Path(args.samples)), indent=2, ensure_ascii=False))

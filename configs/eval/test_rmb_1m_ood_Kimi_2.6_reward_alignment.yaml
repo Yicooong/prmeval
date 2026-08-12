@@ -1,10 +1,10 @@
 sampling:
-  dataset_name: jsonl-full-smoke
-  adapter: jsonl
-  paths: [examples/stage_1_smoke/trajectories.jsonl]
-  max_trajectories: 1
+  dataset_name: rbm_1m_ood_test
+  adapter: huggingface
+  paths: [/mnt/xxx/rbm-1m-ood]
+  max_trajectories: 10
   eval_types: [reward_alignment]
-  max_frames: 3
+  max_frames: 8
   pad_frames: false
   progress_type: absolute_first_frame
 
@@ -23,5 +23,5 @@ baseline:
 
 metrics: [reward_alignment]
 output_dir: evaluation_output
-run_name: full-smoke
+run_name: test_rbm_1m_ood
 resume: false

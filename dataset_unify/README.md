@@ -110,38 +110,16 @@ python -m dataset_unify.validate_dataset \
 
 ## 交给 PRMEval 使用
 
-PRMEval 当前通过 `processed_cache` adapter 读取 NPZ 帧缓存。因此，统一后的本地 Hugging Face Dataset 还需要执行一次评测预处理：
-
-视频解码优先使用 PyAV；如果当前环境没有 PyAV，则自动使用系统 `ffmpeg` 和 `ffprobe`。预处理生成的 `Trajectory` 会继续保留 `is_robot`。
+PRMEval 通过 `huggingface` adapter 直接读取统一后的本地 Hugging Face Dataset。视频解码优先使用 PyAV；如果当前环境没有 PyAV，则自动使用系统 `ffmpeg` 和 `ffprobe`。
 
 ```yaml
-# configs/data/my_local_dataset.yaml
-output_dir: /path/to/processed_datasets
-max_frames: 32
-
-sources:
-  - path: /path/to/unified_datasets/<dataset_name>
-    cache_name: <dataset_name>
+sampling:
+  dataset_name: <dataset_name>
+  adapter: huggingface
+  paths: [/path/to/unified_datasets/<dataset_name>]
 ```
 
-```bash
-prmeval-data-preprocess --config configs/data/my_local_dataset.yaml
-```
-
-评测配置使用生成的缓存：
-
-```yaml
-dataset:
-  name: <dataset_name>
-  adapter: processed_cache
-  root: /path/to/processed_datasets
-```
-
-也可以通过环境变量设置缓存根目录：
-
-```bash
-export PRMEVAL_PROCESSED_DATASETS_PATH=/path/to/processed_datasets
-```
+`paths` 直接指定 Dataset 目录，不会与 `dataset_name` 再次拼接。
 
 ## 新增数据集
 
@@ -160,8 +138,7 @@ export PRMEVAL_PROCESSED_DATASETS_PATH=/path/to/processed_datasets
 ```text
 MP4 + build_standard_dataset
     -> save_to_disk
-    -> prmeval-data-preprocess
-    -> ProcessedCacheDatasetAdapter
+    -> HuggingfaceDatasetAdapter
     -> Trajectory
     -> RewardAlignmentSampler
 ```

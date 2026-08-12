@@ -46,8 +46,7 @@ all_metrics.json + 分数据集结果
 原始数据集
     -> dataset_unify
     -> 本地 Hugging Face Dataset
-    -> prmeval-data-preprocess
-    -> processed_cache adapter
+    -> huggingface adapter
     -> Stage 1 / Stage 2 / Stage 3
 ```
 
@@ -153,14 +152,11 @@ python -m prmeval.cli run \
 一个完整评测配置包含以下部分：
 
 ```yaml
-dataset:
-  name: jsonl-full-smoke
+sampling:
+  dataset_name: jsonl-full-smoke
   adapter: jsonl
-  root: .
   paths: [examples/stage_1_smoke/trajectories.jsonl]
   max_trajectories: 1
-
-sampling:
   eval_types: [reward_alignment]
   max_frames: 3
   pad_frames: false
@@ -188,8 +184,7 @@ resume: false
 
 | 配置块 | 作用阶段 | 说明 |
 |---|---|---|
-| `dataset` | Stage 1 | 数据来源、adapter、路径和加载数量 |
-| `sampling` | Stage 1 | 评测类型、抽帧数量和 progress 定义 |
+| `sampling` | Stage 1 | 数据集身份、adapter、路径、轨迹选择、抽帧数量和 progress 定义 |
 | `baseline` | Stage 2 | endpoint、模型、认证、并发和重试 |
 | `metrics` | Stage 3 | 需要计算的指标 |
 | `output_dir/run_name` | 全阶段 | 运行产物目录 |
@@ -217,7 +212,7 @@ resume: false
 
 当前转换链路只支持 `output.use_video: true`；`false` 会直接报错，避免生成与 PRMEval 不兼容的图片序列 Dataset。
 
-`prmeval-data-preprocess` 会把 MP4 解码并保存为 NPZ。它优先使用 PyAV，PyAV 不可用时回退到系统 `ffmpeg`/`ffprobe`。预处理后的 `processed_cache` adapter 会将标准字段转换为内部 `Trajectory`，其中 `is_robot` 会被完整保留。
+`huggingface` adapter 直接读取 `Dataset.save_to_disk()` 生成的本地目录，并将其中的标准字段转换为内部 `Trajectory`。相对视频路径以 Dataset 目录为基准解析；MP4 解码优先使用 PyAV，不可用时回退到系统 `ffmpeg`/`ffprobe`。
 
 使用已有配置执行转换：
 
@@ -233,37 +228,22 @@ python -m dataset_unify.validate_dataset \
   /path/to/unified_datasets/<dataset_name>
 ```
 
-随后创建一个预处理配置，将 `sources[].path` 指向这个本地 Dataset：
+评测配置通过 `paths` 直接给出本地 Hugging Face Dataset 路径：
 
 ```yaml
-output_dir: /path/to/processed_datasets
-max_frames: 32
-
-sources:
-  - path: /path/to/unified_datasets/<dataset_name>
-    cache_name: <dataset_name>
+sampling:
+  dataset_name: <dataset_name>
+  adapter: huggingface
+  paths: [/path/to/unified_datasets/<dataset_name>]
 ```
 
-运行：
-
-```bash
-prmeval-data-preprocess --config configs/data/my_local_dataset.yaml
-```
-
-评测配置再通过 `processed_cache` adapter 使用生成的缓存：
-
-```yaml
-dataset:
-  name: <dataset_name>
-  adapter: processed_cache
-  root: /path/to/processed_datasets
-```
+配置中的相对 `paths` 以当前运行目录为基准。JSONL 记录中的相对帧路径以该 JSONL 文件所在目录为基准。
 
 支持的数据集配置、loader 内部接口和新增数据集步骤见 [`dataset_unify/README.md`](dataset_unify/README.md)。
 
 ## 本地数据格式与 Dataset Adapter
 
-Dataset adapter 负责把不同的本地存储格式统一转换成内部 `Trajectory`。当前提供 `jsonl` 和 `processed_cache` 两种 adapter。
+Dataset adapter 负责把不同的本地存储格式统一转换成内部 `Trajectory`。当前提供 `jsonl` 和 `huggingface` 两种 adapter。
 
 ### JSONL adapter
 
@@ -305,45 +285,18 @@ Trajectory          --sampler------->  samples.jsonl
 samples.jsonl        --Stage 2------>   predictions.jsonl
 ```
 
-### processed_cache adapter
+### huggingface adapter
 
-适合较大的 Hugging Face 数据集和包含视频的正式评测。它读取由 `prmeval-data-preprocess` 生成的本地缓存：
+适合较大的 Hugging Face 数据集和包含视频的正式评测。`paths` 中的每一项都是一个可由 `datasets.load_from_disk()` 读取的完整本地目录：
 
-```text
-processed_datasets/
-└── <cache_name>/
-    ├── frames/
-    │   └── *.npz
-    ├── processed_dataset/
-    │   ├── dataset_info.json
-    │   ├── state.json
-    │   └── data-*.arrow
-    └── prepare_manifest.json
+```yaml
+sampling:
+  dataset_name: rbm-1m-ood
+  adapter: huggingface
+  paths: [/path/to/hf_datasets/rbm-1m-ood]
 ```
 
-如果下载的数据还没有这种结构，复制并修改 [rbm_1m_ood_local.yaml](configs/data/rbm_1m_ood_local.yaml)，然后运行：
-
-```bash
-prmeval-data-preprocess \
-  --config configs/data/rbm_1m_ood_local.yaml
-```
-
-预处理会：
-
-1. 验证 `id` 和 `task`；
-2. 读取 `frames`、`frames_video`、`video` 或 `frames_path`；
-3. 解码视频并进行一次固定抽帧；
-4. 保存压缩 NPZ；
-5. 创建轻量 Hugging Face `processed_dataset` 索引；
-6. 将失败轨迹记录到 `prepare_manifest.json`。
-
-这个缓存是评测输入缓存，不包含模型 embedding，也不包含训练数据索引。
-
-`rbm-1m-ood` 在 [manifests.py](prmeval/data/manifests.py) 中聚合了六个 OOD 子数据集。可以通过 `dataset.root` 指定缓存根目录，也可以设置：
-
-```bash
-export PRMEVAL_PROCESSED_DATASETS_PATH=/path/to/processed_datasets
-```
+目录中的 `frames` 可以是内嵌数组、NPZ 路径或视频路径，也兼容 `frames_video`、`video`、`frames_path` 字段。相对路径会相对于各自的 Dataset 目录解析。`dataset_name` 只用于评测记录和 sample ID，不用于拼接磁盘路径。
 
 ## Stage 1：数据采样
 
@@ -529,7 +482,7 @@ evaluation_output/<run_name>/
 
 当 `resume: true` 时：
 
-- Stage 1 使用 dataset/sampling 指纹判断是否可以复用已有 samples；
+- Stage 1 使用 sampling 指纹判断是否可以复用已有 samples；
 - Stage 2 跳过已经成功的 `sample_id`；
 - 失败样本仍可在下次运行中重试；
 - 相同输出目录中的配置指纹不一致时会拒绝混写。
@@ -624,7 +577,7 @@ tests/               单元测试、contract test 和 golden fixture
 PYTHONPATH=. python -m unittest tests.test_evaluation -v
 ```
 
-数据统一到 PRMEval 的端到端 contract test 会真实生成 MP4，并依次验证本地 HF Dataset、预处理、`processed_cache` adapter 和 sampler：
+数据统一到 PRMEval 的端到端 contract test 会真实生成 MP4，并依次验证本地 HF Dataset、`huggingface` adapter 和 sampler：
 
 ```bash
 python -m unittest tests.test_dataset_unify_contract -v

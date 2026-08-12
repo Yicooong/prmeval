@@ -32,11 +32,7 @@ def _fingerprint(config: EvalConfig) -> str:
 
 
 def _sampling_fingerprint(config: EvalConfig) -> str:
-    canonical = json.dumps(
-        {"dataset": config.dataset.model_dump(), "sampling": config.sampling.model_dump()},
-        sort_keys=True,
-        separators=(",", ":"),
-    )
+    canonical = json.dumps(config.sampling.model_dump(), sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
@@ -181,7 +177,9 @@ class Evaluator:
 
     def _samples(self, trajectories) -> Iterable:
         for eval_type in self.config.sampling.eval_types:
-            yield from create_sampler(eval_type, self.config.sampling, self.config.dataset.name).sample(trajectories)
+            yield from create_sampler(
+                eval_type, self.config.sampling, self.config.sampling.dataset_name
+            ).sample(trajectories)
 
     def sample(self, samples_path: str | Path | None = None) -> dict:
         """Stage 1: adapt a dataset, sample it, and write the portable sample protocol."""
@@ -197,24 +195,23 @@ class Evaluator:
             existing = json.loads(manifest_path.read_text(encoding="utf-8"))
             if existing.get("fingerprint") != fingerprint:
                 raise RuntimeError(
-                    "Sample output contains a different dataset/sampling fingerprint: "
+                    "Sample output contains a different sampling fingerprint: "
                     f"{existing.get('fingerprint')}"
                 )
             return {**existing["summary"], "reused": True}
 
-        trajectories = list(create_dataset(self.config.dataset).load())
+        trajectories = list(create_dataset(self.config.sampling).load())
         samples = list(self._samples(trajectories))
         if not samples:
             raise ValueError(
                 f"Sampling produced no samples for eval types: {', '.join(self.config.sampling.eval_types)}"
             )
-        summary = write_sample_artifacts(samples, destination, self.config.dataset.name)
+        summary = write_sample_artifacts(samples, destination, self.config.sampling.dataset_name)
         summary.update({"trajectories": len(trajectories), "fingerprint": fingerprint, "reused": False})
         manifest = {
-            "schema_version": "prmeval.sample-manifest.v1",
+            "schema_version": "prmeval.sample-manifest.v2",
             "fingerprint": fingerprint,
             "created_at": datetime.now(timezone.utc).isoformat(),
-            "dataset": self.config.dataset.model_dump(),
             "sampling": self.config.sampling.model_dump(),
             "summary": summary,
         }
@@ -367,6 +364,6 @@ class Evaluator:
         for eval_type, rows in by_eval.items():
             directory = self.output_dir / eval_type
             directory.mkdir(exist_ok=True)
-            (directory / f"{self.config.dataset.name}_results.json").write_text(
+            (directory / f"{self.config.sampling.dataset_name}_results.json").write_text(
                 json.dumps(jsonable(rows), indent=2, ensure_ascii=False), encoding="utf-8"
             )

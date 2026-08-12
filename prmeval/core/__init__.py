@@ -1,6 +1,6 @@
 """Stable configuration, schemas, and component registries."""
 
-from .config import BaselineConfig, DatasetConfig, EvalConfig, SamplingConfig
+from .config import BaselineConfig, EvalConfig, SamplingConfig
 from .schemas import (
     EvaluationRecord,
     PreferencePrediction,
@@ -13,7 +13,6 @@ from .schemas import (
 
 __all__ = [
     "BaselineConfig",
-    "DatasetConfig",
     "EvalConfig",
     "EvaluationRecord",
     "PreferencePrediction",
