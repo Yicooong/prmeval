@@ -19,7 +19,7 @@ PRMEval 是一个面向机器人任务进度与偏好模型的远程评测框架
 PRMEval 支持 Python 3.10 及以上版本。
 
 ```bash
-pip install -e 
+pip install -e .
 ```
 
 ## 快速开始
