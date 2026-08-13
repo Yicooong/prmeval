@@ -100,6 +100,40 @@ class FrameworkTest(unittest.TestCase):
         evaluator_class.assert_called_once_with(config, show_progress=True)
         self.assertEqual(json.loads(stdout.getvalue()), evaluator.run.return_value)
 
+    def test_cli_metric_summary_omits_verbose_details(self):
+        config = MagicMock()
+        evaluator = MagicMock()
+        evaluator.evaluate_metrics.return_value = {
+            "metrics": {
+                "reward_alignment": {
+                    "loss": 0.25,
+                    "num_samples": 2,
+                    "slices": {"dataset:model": {"mse": 0.25, "num_samples": 2}},
+                    "details": {"sample-1": {"mse": 0.5}},
+                },
+                "policy_ranking": {
+                    "kendall": 1.0,
+                    "num_tasks": 1,
+                    "task_details": {"task-1": {"last": 1.0}},
+                },
+            },
+            "coverage": {"successful": 2},
+        }
+        stdout = io.StringIO()
+        with (
+            patch("prmeval.cli.EvalConfig.from_yaml", return_value=config),
+            patch("prmeval.cli.Evaluator", return_value=evaluator),
+            patch("prmeval.cli.logging.basicConfig"),
+            redirect_stdout(stdout),
+        ):
+            self.assertEqual(cli_main(["metrics", "--config", "config.yaml"]), 0)
+
+        rendered = json.loads(stdout.getvalue())
+        self.assertNotIn("details", rendered["metrics"]["reward_alignment"])
+        self.assertNotIn("task_details", rendered["metrics"]["policy_ranking"])
+        self.assertEqual(rendered["metrics"]["reward_alignment"]["loss"], 0.25)
+        self.assertEqual(rendered["metrics"]["reward_alignment"]["slices"]["dataset:model"]["num_samples"], 2)
+
     def test_cli_no_progress_is_forwarded_to_evaluator(self):
         config = MagicMock()
         evaluator = MagicMock()

@@ -71,6 +71,28 @@ def _load_records(path: Path) -> list[EvaluationRecord]:
     return records
 
 
+def _metric_summary_for_stdout(summary: dict) -> dict:
+    """Return metric aggregates without verbose per-sample or per-task details."""
+    metrics = summary.get("metrics")
+    if not isinstance(metrics, dict):
+        return summary
+    return {
+        **summary,
+        "metrics": {
+            name: (
+                {
+                    key: value
+                    for key, value in result.items()
+                    if key not in {"details", "task_details"}
+                }
+                if isinstance(result, dict)
+                else result
+            )
+            for name, result in metrics.items()
+        },
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "list-datasets":
@@ -120,7 +142,7 @@ def main(argv: list[str] | None = None) -> int:
         print(rendered)
     elif args.command == "run":
         summary = _evaluator(args).run()
-        print(json.dumps(summary, indent=2))
+        print(json.dumps(_metric_summary_for_stdout(summary), indent=2))
     elif args.command == "sample":
         summary = _evaluator(args).sample(args.output)
         print(json.dumps(summary, indent=2, ensure_ascii=False))
@@ -129,7 +151,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(summary, indent=2, ensure_ascii=False))
     elif args.command == "metrics":
         summary = _evaluator(args).evaluate_metrics(args.predictions)
-        print(json.dumps(summary, indent=2, ensure_ascii=False))
+        print(json.dumps(_metric_summary_for_stdout(summary), indent=2, ensure_ascii=False))
     return 0
 
 

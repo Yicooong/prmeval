@@ -239,6 +239,7 @@ Stage 2 首次启动时创建运行清单，用来阻止不兼容产物写入同
 ```
 
 不同 eval type 的指标字段不同，具体定义见 [三阶段评测流程](PIPELINE.md#stage-3指标计算)。当使用默认 `predictions.jsonl` 时，coverage 继承自 `inference_summary.json`。
+`run` 和 `metrics` 命令在终端只打印汇总指标，不打印逐样本的 `details` 或逐任务的 `task_details`；这些详细结果仍完整保存在 `all_metrics.json` 中。
 
 ### `<eval_type>/<dataset_name>_results.json`
 
