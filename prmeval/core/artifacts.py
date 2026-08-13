@@ -7,7 +7,8 @@ from pathlib import Path
 
 import numpy as np
 
-from ..core.schemas import (
+from ..sample.adapters import load_frames
+from .schemas import (
     EvaluationRecord,
     EvaluationSample,
     FrameReference,
@@ -18,7 +19,6 @@ from ..core.schemas import (
     ValuePayload,
     jsonable,
 )
-from ..data.adapters import load_frames
 
 SAMPLE_SCHEMA_VERSION = "bench.record.v1"
 QUALITY_RANK = {"successful": 2.0, "suboptimal": 1.0, "failure": 0.0, "failed": 0.0}
@@ -225,7 +225,7 @@ def _runtime_item(item: RecordInputItem, bundle_dir: Path) -> RecordInputItem:
 
 
 def record_to_sample(record: EvaluationRecord, bundle_dir: Path) -> EvaluationSample:
-    """Convert the disk protocol to existing baseline-internal sample types."""
+    """Convert the disk protocol to existing infer-internal sample types."""
     common = {
         "task": record.input.task,
         "data_source": record.evaluation.dataset.source or record.evaluation.dataset.name,

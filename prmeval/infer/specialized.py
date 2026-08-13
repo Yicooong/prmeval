@@ -5,8 +5,7 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, Field
 
 from ..core.schemas import EvaluationSample, PreferencePrediction, PreferenceSample, ProgressPrediction, ProgressSample
-from .base import RemoteBaseline, RemoteError
-from .images import image_data_url
+from .base import RemoteError, RemoteInfer, image_data_url
 
 
 class RemoteTrajectory(BaseModel):
@@ -37,7 +36,7 @@ class SpecializedResponse(BaseModel):
     usage: dict[str, Any] = Field(default_factory=dict)
 
 
-class SpecializedBaseline(RemoteBaseline):
+class SpecializedInfer(RemoteInfer):
     transport = "specialized"
     capabilities = {"progress", "preference"}
     progress_prediction_type: Literal["progress", "instruction_likelihood"] = "progress"

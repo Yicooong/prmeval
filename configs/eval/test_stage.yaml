@@ -8,7 +8,7 @@ sampling:
   pad_frames: false
   progress_type: absolute_first_frame
 
-baseline:
+infer:
   name: progress_test
   transport: openai_chat
   base_url: BASE_URL

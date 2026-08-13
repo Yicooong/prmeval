@@ -30,7 +30,7 @@ class SamplingConfig(BaseModel):
     trajectories_per_source: int | None = Field(default=None, ge=1)
 
 
-class BaselineConfig(BaseModel):
+class InferConfig(BaseModel):
     name: str
     transport: Literal["openai_chat", "specialized"] | None = None
     base_url: str
@@ -58,7 +58,7 @@ class BaselineConfig(BaseModel):
             if value in os.environ:
                 resolved[field] = os.environ[value]
             elif value.isidentifier() and value.isupper():
-                raise ValueError(f"Environment variable {value!r} configured by baseline.{field} is missing")
+                raise ValueError(f"Environment variable {value!r} configured by infer.{field} is missing")
         return resolved
 
 
@@ -66,7 +66,7 @@ class EvalConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     sampling: SamplingConfig = Field(default_factory=SamplingConfig)
-    baseline: BaselineConfig
+    infer: InferConfig
     metrics: list[str] = Field(default_factory=list)
     output_dir: str = "evaluation_output"
     run_name: str | None = None

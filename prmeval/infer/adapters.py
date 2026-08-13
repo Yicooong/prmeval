@@ -3,13 +3,12 @@ from __future__ import annotations
 import hashlib
 import random
 
-from ..core.config import BaselineConfig
-from ..core.registry import BASELINES, register_baseline
+from ..core.config import InferConfig
+from ..core.registry import INFERS, register_infer
 from ..core.schemas import PreferencePrediction, PreferenceSample, ProgressPrediction, ProgressSample
-from .base import RemoteError
-from .images import vision_content
-from .openai import OpenAIChatBaseline, PREFERENCE_SCHEMA
-from .specialized import SpecializedBaseline
+from .base import RemoteError, vision_content
+from .openai import OpenAIChatInfer, PREFERENCE_SCHEMA
+from .specialized import SpecializedInfer
 
 
 def _prediction(sample, values, config, raw):
@@ -22,8 +21,8 @@ def _prediction(sample, values, config, raw):
     )
 
 
-@register_baseline("progress_test")
-class ProgressTestRemote(OpenAIChatBaseline):
+@register_infer("progress_test")
+class ProgressTestRemote(OpenAIChatInfer):
     """Generic OpenAI-compatible VLM used to smoke-test progress inference."""
 
     capabilities = {"progress"}
@@ -50,8 +49,8 @@ class ProgressTestRemote(OpenAIChatBaseline):
         return super().predict(sample)
 
 
-@register_baseline("gvl")
-class GVLRemote(OpenAIChatBaseline):
+@register_infer("gvl")
+class GVLRemote(OpenAIChatInfer):
     """GVL's shuffled-frame protocol, transported through chat completions."""
     capabilities = {"progress"}
 
@@ -90,8 +89,8 @@ class GVLRemote(OpenAIChatBaseline):
         return _prediction(sample, values, self.config, raw)
 
 
-@register_baseline("rlvlmf")
-class RLVLMFRemote(OpenAIChatBaseline):
+@register_infer("rlvlmf")
+class RLVLMFRemote(OpenAIChatInfer):
     capabilities = {"preference"}
 
     def predict(self, sample):
@@ -125,8 +124,8 @@ class RLVLMFRemote(OpenAIChatBaseline):
         )
 
 
-@register_baseline("roboreward")
-class RoboRewardRemote(OpenAIChatBaseline):
+@register_infer("roboreward")
+class RoboRewardRemote(OpenAIChatInfer):
     capabilities = {"progress"}
 
     def predict(self, sample):
@@ -148,8 +147,8 @@ class RoboRewardRemote(OpenAIChatBaseline):
         return _prediction(sample, [(score - 1) / 4] * len(sample.trajectory.frames), self.config, raw)
 
 
-@register_baseline("robodopamine")
-class RoboDopamineRemote(OpenAIChatBaseline):
+@register_infer("robodopamine")
+class RoboDopamineRemote(OpenAIChatInfer):
     capabilities = {"progress"}
 
     def predict(self, sample):
@@ -182,19 +181,19 @@ class RoboDopamineRemote(OpenAIChatBaseline):
 
 
 for _name in ("rbm", "rewind"):
-    register_baseline(_name)(type(f"{_name.title()}Remote", (SpecializedBaseline,), {}))
+    register_infer(_name)(type(f"{_name.title()}Remote", (SpecializedInfer,), {}))
 
-register_baseline("topreward")(type(
-    "ToprewardRemote", (SpecializedBaseline,),
+register_infer("topreward")(type(
+    "ToprewardRemote", (SpecializedInfer,),
     {"capabilities": {"progress"}, "progress_prediction_type": "instruction_likelihood"},
 ))
-register_baseline("vlac")(type("VlacRemote", (SpecializedBaseline,), {"capabilities": {"progress"}}))
+register_infer("vlac")(type("VlacRemote", (SpecializedInfer,), {"capabilities": {"progress"}}))
 
 
-def create_baseline(config: BaselineConfig):
-    baseline_cls = BASELINES.get(config.name)
-    if config.transport and baseline_cls.transport != config.transport:
+def create_infer(config: InferConfig):
+    infer_cls = INFERS.get(config.name)
+    if config.transport and infer_cls.transport != config.transport:
         raise ValueError(
-            f"Baseline '{config.name}' uses transport '{baseline_cls.transport}', not '{config.transport}'"
+            f"Infer '{config.name}' uses transport '{infer_cls.transport}', not '{config.transport}'"
         )
-    return baseline_cls(config)
+    return infer_cls(config)

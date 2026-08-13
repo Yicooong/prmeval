@@ -4,13 +4,13 @@ import argparse
 import json
 from pathlib import Path
 
+from .core.artifacts import validate_sample_artifacts
 from .core.config import EvalConfig
-from .core.registry import BASELINES, DATASETS, METRICS, SAMPLERS
+from .core.registry import DATASETS, INFERS, METRICS, SAMPLERS
+from .core.runner import Evaluator
 from .core.schemas import EvaluationRecord, jsonable
-from .data.adapters import create_dataset
-from .evaluation.artifacts import validate_sample_artifacts
-from .evaluation.runner import Evaluator
 from .metrics.builtins import compute_metrics
+from .sample.adapters import create_dataset
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -29,7 +29,7 @@ def build_parser() -> argparse.ArgumentParser:
     stage_metrics.add_argument("--config", required=True)
     stage_metrics.add_argument("--predictions", help="Optional predictions.jsonl source")
     sub.add_parser("list-datasets")
-    sub.add_parser("list-baselines")
+    sub.add_parser("list-infers")
     sub.add_parser("list-samplers")
     sub.add_parser("list-metrics")
     validate = sub.add_parser("validate-dataset")
@@ -64,8 +64,8 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "list-datasets":
         print("\n".join(DATASETS.names()))
-    elif args.command == "list-baselines":
-        print("\n".join(BASELINES.names()))
+    elif args.command == "list-infers":
+        print("\n".join(INFERS.names()))
     elif args.command == "list-samplers":
         print("\n".join(SAMPLERS.names()))
     elif args.command == "list-metrics":
@@ -80,11 +80,11 @@ def main(argv: list[str] | None = None) -> int:
         source = Path(args.predictions)
         records = _load_records(source)
         identities = [
-            (record.evaluation.dataset.name, record.baseline.name if record.baseline else None, record.sample_id)
+            (record.evaluation.dataset.name, record.infer.name if record.infer else None, record.sample_id)
             for record in records
         ]
         if len(identities) != len(set(identities)):
-            raise ValueError(f"Duplicate dataset/baseline/sample identity found in {source}")
+            raise ValueError(f"Duplicate dataset/infer/sample identity found in {source}")
         print(json.dumps({
             "valid": True,
             "schema_version": "bench.record.v1",

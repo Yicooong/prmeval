@@ -71,13 +71,13 @@
           "mse": 0.0,
           "pearson": 1.0,
           "dataset": "smoke",
-          "baseline": "mock-model"
+          "infer": "mock-model"
         },
         "align-offset": {
           "mse": 0.01666666666666666,
           "pearson": 1.0,
           "dataset": "smoke",
-          "baseline": "mock-model"
+          "infer": "mock-model"
         }
       }
     }

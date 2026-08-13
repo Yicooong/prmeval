@@ -2,7 +2,7 @@
 
 ## 1. 设计目标
 
-`EvaluationRecord` 是 Stage 1 与 Stage 2 共用的统一数据结构，也是 Stage 3 的输入。新增 dataset 或 baseline 时不修改顶层结构；新增 metric 时，由 Metric 校验它需要的 `target.kind` 和 `prediction.kind`。
+`EvaluationRecord` 是 Stage 1 与 Stage 2 共用的统一数据结构，也是 Stage 3 的输入。新增 dataset 或 infer 时不修改顶层结构；新增 metric 时，由 Metric 校验它需要的 `target.kind` 和 `prediction.kind`。
 
 顶层结构如下：
 
@@ -14,7 +14,7 @@
   "evaluation": {},
   "input": {},
   "target": {},
-  "baseline": null,
+  "infer": null,
   "prediction": null,
   "execution": null,
   "source": {},
@@ -31,7 +31,7 @@
 | 评测路由 | `evaluation` | 指定 eval type 和数据集切片 |
 | 模型输入 | `input` | 保存任务、帧引用和抽样信息 |
 | 指标真值 | `target` | 保存 progress、rank、preference 等真值 |
-| 模型身份 | `baseline` | 保存 baseline、远程模型和版本 |
+| 模型身份 | `infer` | 保存 infer、远程模型和版本 |
 | 模型输出 | `prediction` | 保存 adapter 归一化后的预测 |
 | 执行审计 | `execution` | 保存成功/失败、重试次数和耗时 |
 | 来源审计 | `source` | 保存可选的原始数据 ID |
@@ -58,10 +58,10 @@ inferred  Stage 2 已执行，结果可能成功或失败
 
 必填，是唯一跨阶段主键。Stage 2 必须原样保留 Stage 1 的值。
 
-同一个 sample 分别由多个 baseline 推理时，可以在不同 run 中保持相同 `sample_id`。合并结果后的联合身份为：
+同一个 sample 分别由多个 infer 推理时，可以在不同 run 中保持相同 `sample_id`。合并结果后的联合身份为：
 
 ```text
-(evaluation.dataset.name, baseline.name, sample_id)
+(evaluation.dataset.name, infer.name, sample_id)
 ```
 
 ## 4. `evaluation`
@@ -145,13 +145,13 @@ len(target.values) == len(prediction.values)
 所有 progress 位于 [0, 1]
 ```
 
-## 7. `baseline` 与 `execution`
+## 7. `infer` 与 `execution`
 
 成功推理记录示例：
 
 ```json
 {
-  "baseline": {
+  "infer": {
     "name": "rbm",
     "model": "robometer-4b",
     "version": "v1"
@@ -165,7 +165,7 @@ len(target.values) == len(prediction.values)
 }
 ```
 
-新增 baseline 只需要 adapter 填写上述字段并产生统一 `prediction`，不修改 Record 顶层结构。
+新增 infer 只需要 adapter 填写上述字段并产生统一 `prediction`，不修改 Record 顶层结构。
 
 ## 8. 阶段必填规则
 
@@ -177,7 +177,7 @@ len(target.values) == len(prediction.values)
 | `evaluation` | 必填 | 原样保留 | 原样保留 |
 | `input` | 必填 | 原样保留 | 原样保留 |
 | `target` | 按 eval type 要求 | 原样保留 | 原样保留 |
-| `baseline` | 必须为空 | 必填 | 建议保留 |
+| `infer` | 必须为空 | 必填 | 建议保留 |
 | `prediction` | 必须为空 | 必填 | 通常为空 |
 | `execution` | 必须为空 | 必填、status=success | 必填、status=error |
 | `execution.error` | — | 为空 | 必填 |
@@ -206,7 +206,7 @@ len(target.values) == len(prediction.values)
     }]
   },
   "target": {"kind": "progress", "values": [0.0, 0.5, 1.0]},
-  "baseline": {"name": "rbm", "model": "robometer-4b", "version": "v1"},
+  "infer": {"name": "rbm", "model": "robometer-4b", "version": "v1"},
   "prediction": {"kind": "progress", "values": [0.0, 0.4, 0.8]},
   "execution": {"status": "success", "attempts": 1, "latency_seconds": 0.83, "error": null},
   "source": {"id": "raw-trajectory-123", "data": {}},

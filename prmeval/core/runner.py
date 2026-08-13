@@ -10,9 +10,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
-from ..baselines.adapters import create_baseline
-from ..core.config import EvalConfig
-from ..core.schemas import (
+from ..infer.adapters import create_infer
+from ..metrics.builtins import compute_metrics
+from ..sample.adapters import create_dataset
+from ..sample.samplers import create_sampler
+from .artifacts import load_sample_artifacts, record_to_sample, write_sample_artifacts
+from .config import EvalConfig
+from .schemas import (
     EvaluationRecord,
     PreferencePrediction,
     ProgressPrediction,
@@ -20,10 +24,6 @@ from ..core.schemas import (
     ValuePayload,
     jsonable,
 )
-from ..data.adapters import create_dataset
-from ..data.samplers import create_sampler
-from ..metrics.builtins import compute_metrics
-from .artifacts import load_sample_artifacts, record_to_sample, write_sample_artifacts
 
 
 def _fingerprint(config: EvalConfig) -> str:
@@ -38,12 +38,12 @@ def _sampling_fingerprint(config: EvalConfig) -> str:
 
 def _redacted_config(config: EvalConfig) -> dict:
     value = config.model_dump()
-    baseline = value.get("baseline", {})
-    if baseline.get("api_key"):
-        baseline["api_key"] = "***"
-    baseline["headers"] = {
+    infer = value.get("infer", {})
+    if infer.get("api_key"):
+        infer["api_key"] = "***"
+    infer["headers"] = {
         key: "***" if any(secret in key.lower() for secret in ("authorization", "api-key", "token")) else item
-        for key, item in baseline.get("headers", {}).items()
+        for key, item in infer.get("headers", {}).items()
     }
     return value
 
@@ -118,8 +118,8 @@ class Evaluator:
         attempts: int = 1,
     ) -> EvaluationRecord:
         normalized = None
-        model = self.config.baseline.model_id
-        version = self.config.baseline.model_version
+        model = self.config.infer.model_id
+        version = self.config.infer.model_version
         if isinstance(prediction, ProgressPrediction):
             model = prediction.model
             version = prediction.model_version
@@ -140,8 +140,8 @@ class Evaluator:
         payload = source.model_dump()
         payload.update({
             "stage": "inferred",
-            "baseline": {
-                "name": self.config.baseline.name,
+            "infer": {
+                "name": self.config.infer.name,
                 "model": model,
                 "version": version,
             },
@@ -155,24 +155,24 @@ class Evaluator:
         })
         return EvaluationRecord.model_validate(payload)
 
-    def _predict(self, baseline, source: EvaluationRecord, bundle_dir: Path):
+    def _predict(self, infer, source: EvaluationRecord, bundle_dir: Path):
         started = time.monotonic()
-        baseline.begin_prediction()
+        infer.begin_prediction()
         try:
             sample = record_to_sample(source, bundle_dir)
-            prediction = baseline.predict(sample)
+            prediction = infer.predict(sample)
             if isinstance(prediction, ProgressPrediction):
                 expected = len(sample.trajectory.frames)
                 actual = len(prediction.progress)
                 if actual != expected:
                     raise ValueError(f"Progress length mismatch: expected {expected}, got {actual}")
             return self._record_for(
-                source, prediction=prediction, latency=time.monotonic() - started, attempts=baseline.attempts()
+                source, prediction=prediction, latency=time.monotonic() - started, attempts=infer.attempts()
             )
         except Exception as exc:
             return self._record_for(
                 source, error=f"{type(exc).__name__}: {exc}", latency=time.monotonic() - started,
-                attempts=max(1, baseline.attempts()),
+                attempts=max(1, infer.attempts()),
             )
 
     def _samples(self, trajectories) -> Iterable:
@@ -235,28 +235,28 @@ class Evaluator:
             self.inference_summary_path = destination.with_name(f"{destination.stem}.summary.json")
             self.output_dir = destination.parent
         all_records = load_sample_artifacts(source)
-        baseline = create_baseline(self.config.baseline)
+        infer = create_infer(self.config.infer)
         eval_types = {record.evaluation.type for record in all_records}
         required = {
             "preference" if eval_type == "quality_preference" else "progress"
             for eval_type in eval_types
         }
-        unsupported = required - baseline.capabilities
+        unsupported = required - infer.capabilities
         if unsupported:
             raise ValueError(
-                f"Baseline '{self.config.baseline.name}' does not support: {', '.join(sorted(unsupported))}"
+                f"Infer '{self.config.infer.name}' does not support: {', '.join(sorted(unsupported))}"
             )
         model_info = {
-            **baseline.model_info(),
+            **infer.model_info(),
             "sample_artifact": str(source),
             "sample_artifact_sha256": _file_sha256(source),
         }
         completed = self._prepare(model_info)
         records_to_run = [record for record in all_records if record.sample_id not in completed]
         new_records: list[EvaluationRecord] = []
-        with ThreadPoolExecutor(max_workers=self.config.baseline.max_concurrency) as executor:
+        with ThreadPoolExecutor(max_workers=self.config.infer.max_concurrency) as executor:
             future_map = {
-                executor.submit(self._predict, baseline, record, source.parent): record
+                executor.submit(self._predict, infer, record, source.parent): record
                 for record in records_to_run
             }
             for future in as_completed(future_map):
@@ -300,11 +300,11 @@ class Evaluator:
         if any(not record.execution or record.execution.status != "success" for record in records):
             raise ValueError(f"Metric input must contain only successful records: {source}")
         identities = [
-            (record.evaluation.dataset.name, record.baseline.name if record.baseline else None, record.sample_id)
+            (record.evaluation.dataset.name, record.infer.name if record.infer else None, record.sample_id)
             for record in records
         ]
         if len(identities) != len(set(identities)):
-            raise ValueError(f"Metric input contains duplicate dataset/baseline/sample identities: {source}")
+            raise ValueError(f"Metric input contains duplicate dataset/infer/sample identities: {source}")
         metric_names = self.config.metrics or self.config.sampling.eval_types
         metrics = compute_metrics(records, metric_names)
         if self.inference_summary_path.exists() and source == self.predictions_path:

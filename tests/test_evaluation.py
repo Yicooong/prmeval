@@ -9,20 +9,24 @@ from unittest.mock import patch
 import httpx
 import numpy as np
 
-from prmeval.baselines.adapters import create_baseline
-from prmeval.baselines.openai import OpenAIChatBaseline, PROGRESS_SCHEMA
-from prmeval.baselines.specialized import SpecializedBaseline, SpecializedRequest, SpecializedResponse
-from prmeval.core.config import BaselineConfig, EvalConfig, SamplingConfig
+from prmeval.core.artifacts import load_sample_artifacts, validate_sample_artifacts
+from prmeval.core.config import EvalConfig, InferConfig, SamplingConfig
 from prmeval.core.registry import Registry
+from prmeval.core.runner import Evaluator
 from prmeval.core.schemas import (
-    EvaluationRecord, PreferencePrediction, ProgressPrediction, ProgressSample, Trajectory,
+    EvaluationRecord,
+    PreferencePrediction,
+    ProgressPrediction,
+    ProgressSample,
+    Trajectory,
 )
-from prmeval.data.prepare import _uniform_indices, _video_frames
-from prmeval.data.progress import compute_progress
-from prmeval.data.samplers import ConfusionMatrixSampler, QualityPreferenceSampler, RewardAlignmentSampler
-from prmeval.evaluation.runner import Evaluator
-from prmeval.evaluation.artifacts import load_sample_artifacts, validate_sample_artifacts
+from prmeval.infer.adapters import create_infer
+from prmeval.infer.openai import OpenAIChatInfer, PROGRESS_SCHEMA
+from prmeval.infer.specialized import SpecializedInfer, SpecializedRequest, SpecializedResponse
 from prmeval.metrics.builtins import compute_metrics
+from prmeval.sample.prepare import _uniform_indices, _video_frames
+from prmeval.sample.progress import compute_progress
+from prmeval.sample.samplers import ConfusionMatrixSampler, QualityPreferenceSampler, RewardAlignmentSampler
 
 
 PIXEL = "data:image/jpeg;base64,/9j/2Q=="
@@ -78,7 +82,7 @@ class FrameworkTest(unittest.TestCase):
                 paths=["trajectories.jsonl"],
                 max_trajectories=2,
             ),
-            baseline=BaselineConfig(name="gvl", base_url="https://example.com", model_id="model"),
+            infer=InferConfig(name="gvl", base_url="https://example.com", model_id="model"),
         )
 
         self.assertFalse(hasattr(config, "dataset"))
@@ -88,13 +92,13 @@ class FrameworkTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             EvalConfig.model_validate({
                 "dataset": {"name": "legacy", "adapter": "jsonl"},
-                "baseline": {"name": "gvl", "base_url": "https://example.com", "model_id": "model"},
+                "infer": {"name": "gvl", "base_url": "https://example.com", "model_id": "model"},
             })
 
-    def test_baseline_config_resolves_environment_variables(self):
+    def test_infer_config_resolves_environment_variables(self):
         config_text = """
 sampling: {dataset_name: fixture, adapter: jsonl}
-baseline:
+infer:
   name: remote
   base_url: BASE_URL
   api_key: OPENAI_API_KEY
@@ -108,16 +112,16 @@ baseline:
                 {"BASE_URL": "https://example.com/v1", "OPENAI_API_KEY": "secret", "MODEL_ID": "model"},
             ):
                 config = EvalConfig.from_yaml(path)
-                self.assertEqual(config.baseline.base_url, "https://example.com/v1")
-                self.assertEqual(config.baseline.api_key, "secret")
-                self.assertEqual(config.baseline.model_id, "model")
+                self.assertEqual(config.infer.base_url, "https://example.com/v1")
+                self.assertEqual(config.infer.api_key, "secret")
+                self.assertEqual(config.infer.model_id, "model")
             with patch.dict("os.environ", {}, clear=True):
                 with self.assertRaisesRegex(ValueError, "BASE_URL"):
                     EvalConfig.from_yaml(path)
                 with self.assertRaisesRegex(ValueError, "MODEL_ID"):
-                    BaselineConfig(name="remote", base_url="https://example.com/v1", model_id="MODEL_ID")
+                    InferConfig(name="remote", base_url="https://example.com/v1", model_id="MODEL_ID")
 
-        explicit = BaselineConfig(
+        explicit = InferConfig(
             name="remote", base_url="https://explicit.example/v1",
             api_key="explicit-key", model_id="explicit-model",
         )
@@ -198,7 +202,7 @@ baseline:
             })
 
     def test_specialized_adapter_contract(self):
-        baseline = SpecializedBaseline(BaselineConfig(
+        infer = SpecializedInfer(InferConfig(
             name="rbm", base_url="http://service/v1", model_id="rbm-model", max_retries=0
         ))
         sample = ProgressSample(
@@ -218,7 +222,7 @@ baseline:
             })
 
         with patch("httpx.post", side_effect=mock_post):
-            prediction = baseline.predict(sample)
+            prediction = infer.predict(sample)
         self.assertEqual(captured["url"], "http://service/v1/evaluations")
         self.assertEqual(captured["payload"]["prediction_type"], "progress")
         self.assertEqual(len(captured["payload"]["trajectories"][0]["frames"]), 2)
@@ -227,7 +231,7 @@ baseline:
     def test_metric_goldens(self):
         progress_records = [
             EvaluationRecord(
-                sample_id=f"p{i}", eval_type="policy_ranking", dataset="fixture", baseline="mock",
+                sample_id=f"p{i}", eval_type="policy_ranking", dataset="fixture", infer="mock",
                 status="success", task="same task", trajectory_id=f"t{i}", quality_label=quality,
                 prediction=ProgressPrediction(sample_id=f"p{i}", progress=[score], model="mock"),
             )
@@ -243,7 +247,7 @@ baseline:
             ("task-b", "task-a", 0.0), ("task-b", "task-b", 1.0),
         ]):
             confusion_records.append(EvaluationRecord(
-                sample_id=f"c{index}", eval_type="confusion_matrix", dataset="fixture", baseline="mock",
+                sample_id=f"c{index}", eval_type="confusion_matrix", dataset="fixture", infer="mock",
                 status="success", task=language, trajectory_id=f"v-{video}",
                 metadata={"lang_task": language, "video_task": video},
                 prediction=ProgressPrediction(sample_id=f"c{index}", progress=[score], model="mock"),
@@ -252,7 +256,7 @@ baseline:
         self.assertEqual(confusion["confusion_matrix"], [[1.0, 0.0], [0.0, 1.0]])
         self.assertEqual(confusion["normalized_trace_minus_offdiag"], 1.0)
         preference_record = EvaluationRecord(
-            sample_id="q", eval_type="quality_preference", dataset="fixture", baseline="mock",
+            sample_id="q", eval_type="quality_preference", dataset="fixture", infer="mock",
             status="success", task="task", prediction=PreferencePrediction(
                 sample_id="q", chosen_probability=0.8, preference="chosen", model="mock"
             ),
@@ -275,9 +279,9 @@ baseline:
         self.assertAlmostEqual(metrics["quality_preference"]["accuracy"], 2 / 3)
         self.assertEqual(metrics["confusion_matrix"]["confusion_matrix"], [[0.9, 0.1], [0.2, 0.8]])
 
-    def test_reward_alignment_slices_dataset_and_baseline_with_one_sample_id(self):
+    def test_reward_alignment_slices_dataset_and_infer_with_one_sample_id(self):
         records = []
-        for dataset, baseline, prediction in [
+        for dataset, infer, prediction in [
             ("rbm-1m-ood", "rbm", [0.0, 0.5, 1.0]),
             ("rbm-1m-ood", "sole-r1", [0.0, 0.4, 0.8]),
             ("rbm-1m-id", "rbm", [0.0, 0.45, 0.9]),
@@ -289,7 +293,7 @@ baseline:
                 evaluation={"type": "reward_alignment", "dataset": {"name": dataset}},
                 input={"task": "task", "items": [{"frames": [], "frame_indices": [0, 1, 2]}]},
                 target={"kind": "progress", "values": [0.0, 0.5, 1.0]},
-                baseline={"name": baseline, "model": baseline},
+                infer={"name": infer, "model": infer},
                 prediction={"kind": "progress", "values": prediction},
                 execution={"status": "success"},
             ))
@@ -301,7 +305,7 @@ baseline:
         self.assertEqual(reward["slices"]["rbm-1m-ood:rbm"]["mse"], 0.0)
 
     def test_openai_parse_retry_and_v1_url(self):
-        baseline = OpenAIChatBaseline(BaselineConfig(
+        infer = OpenAIChatInfer(InferConfig(
             name="test", base_url="http://service/v1", model_id="model", max_retries=1
         ))
         responses = [
@@ -315,12 +319,12 @@ baseline:
             return responses.pop(0)
 
         with patch("httpx.post", side_effect=mock_post):
-            parsed, _ = baseline._chat([{"role": "user", "content": "prompt"}], PROGRESS_SCHEMA)
+            parsed, _ = infer._chat([{"role": "user", "content": "prompt"}], PROGRESS_SCHEMA)
         self.assertEqual(parsed, {"progress": [0.5]})
         self.assertEqual(urls, ["http://service/v1/chat/completions"] * 2)
 
-    def test_progress_test_baseline_uses_default_prompt_and_exact_schema(self):
-        baseline = create_baseline(BaselineConfig(
+    def test_progress_test_infer_uses_default_prompt_and_exact_schema(self):
+        infer = create_infer(InferConfig(
             name="progress_test", transport="openai_chat", base_url="http://service/v1",
             model_id="test-vlm", max_retries=0,
         ))
@@ -342,7 +346,7 @@ baseline:
             })
 
         with patch("httpx.post", side_effect=mock_post):
-            prediction = baseline.predict(sample)
+            prediction = infer.predict(sample)
 
         self.assertEqual(prediction.progress, [0.0, 0.5, 1.0])
         self.assertEqual(captured["url"], "http://service/v1/chat/completions")
@@ -367,7 +371,7 @@ baseline:
                         dataset_name="rbm-1m-ood-micro", adapter="jsonl", paths=[str(GOLDEN_FIXTURE)],
                         eval_types=["reward_alignment"], max_frames=3,
                     ),
-                    baseline=BaselineConfig(
+                    infer=InferConfig(
                         name="gvl",
                         base_url="http://mock-service",
                         model_id="mock-vlm",
@@ -385,7 +389,7 @@ baseline:
                 self.assertEqual(_MockResponse.calls, 1)
 
                 changed = config.model_copy(deep=True)
-                changed.baseline.model_id = "different-model"
+                changed.infer.model_id = "different-model"
                 with self.assertRaises(RuntimeError):
                     Evaluator(changed).run()
 
@@ -397,7 +401,7 @@ baseline:
                     dataset_name="rbm-1m-ood-micro", adapter="jsonl", paths=[str(GOLDEN_FIXTURE)],
                     eval_types=["reward_alignment"], max_frames=3,
                 ),
-                baseline=BaselineConfig(
+                infer=InferConfig(
                     name="gvl", base_url="http://mock-service", model_id="mock-vlm", max_retries=0,
                 ),
                 output_dir=tmp,
@@ -442,7 +446,7 @@ baseline:
                     dataset_name="rbm-1m-ood-micro", adapter="jsonl", paths=[str(GOLDEN_FIXTURE)],
                     eval_types=["reward_alignment"], max_frames=3,
                 ),
-                baseline=BaselineConfig(name="gvl", base_url="http://unused", model_id="unused"),
+                infer=InferConfig(name="gvl", base_url="http://unused", model_id="unused"),
                 output_dir=tmp,
                 run_name="tamper",
             )
@@ -461,7 +465,7 @@ baseline:
                     dataset_name="rbm-1m-ood-micro", adapter="jsonl", paths=[str(GOLDEN_FIXTURE)],
                     eval_types=["reward_alignment"], max_frames=3,
                 ),
-                baseline=BaselineConfig(name="gvl", base_url="http://service", model_id="mock", max_retries=0),
+                infer=InferConfig(name="gvl", base_url="http://service", model_id="mock", max_retries=0),
                 output_dir=tmp,
                 run_name="recovery",
             )

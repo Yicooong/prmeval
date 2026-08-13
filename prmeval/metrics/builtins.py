@@ -38,8 +38,8 @@ def _kendall(a: list[float], b: list[float]) -> float:
 
 
 def _slice_key(record: EvaluationRecord) -> str:
-    baseline = record.baseline.name if record.baseline else "unknown"
-    return f"{record.evaluation.dataset.name}:{baseline}"
+    infer = record.infer.name if record.infer else "unknown"
+    return f"{record.evaluation.dataset.name}:{infer}"
 
 
 @register_metric("reward_alignment")
@@ -72,7 +72,7 @@ class RewardAlignmentMetric(Metric):
                 "mse": mse,
                 "pearson": correlation,
                 "dataset": record.evaluation.dataset.name,
-                "baseline": record.baseline.name if record.baseline else None,
+                "infer": record.infer.name if record.infer else None,
             }
             by_slice[_slice_key(record)].append((mse, correlation))
         losses = [value[0] for pairs in by_slice.values() for value in pairs]

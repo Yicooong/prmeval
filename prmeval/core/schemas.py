@@ -116,8 +116,8 @@ class ValuePayload(FrameworkModel):
     data: dict[str, Any] = Field(default_factory=dict, description="Extensions specific to this payload kind")
 
 
-class BaselineIdentity(FrameworkModel):
-    name: str = Field(description="Registered baseline name in the evaluation framework")
+class InferIdentity(FrameworkModel):
+    name: str = Field(description="Registered infer name in the evaluation framework")
     model: str = Field(description="Model name used by the remote service")
     version: str | None = Field(default=None, description="Optional model or deployment version")
 
@@ -151,14 +151,14 @@ class EvaluationRecord(FrameworkModel):
     input: RecordInput = Field(description="Model input and sampling information")
     target: ValuePayload | None = Field(default=None, description="Metric target; never sent to the remote model")
 
-    # baseline/prediction/execution are populated by Stage 2 and forbidden on sampled records.
-    baseline: BaselineIdentity | None = Field(default=None, description="Identity of the predicting baseline/model")
+    # infer/prediction/execution are populated by Stage 2 and forbidden on sampled records.
+    infer: InferIdentity | None = Field(default=None, description="Identity of the predicting infer/model")
     prediction: ValuePayload | None = Field(default=None, description="Model output normalized by its adapter")
     execution: ExecutionInfo | None = Field(default=None, description="Inference status, retries, latency, and error")
 
     source: SourceInfo = Field(default_factory=SourceInfo, description="Optional source provenance")
     extensions: dict[str, Any] = Field(
-        default_factory=dict, description="Dataset, baseline, or experiment extensions outside the core protocol"
+        default_factory=dict, description="Dataset, infer, or experiment extensions outside the core protocol"
     )
 
     @model_validator(mode="before")
@@ -171,13 +171,13 @@ class EvaluationRecord(FrameworkModel):
             return value
         prediction = value.get("prediction")
         normalized_prediction = None
-        baseline_model = value.get("baseline") or "unknown"
-        baseline_version = None
+        infer_model = value.get("infer") or "unknown"
+        infer_version = None
         if isinstance(prediction, BaseModel):
             prediction = prediction.model_dump()
         if isinstance(prediction, dict):
-            baseline_model = str(prediction.get("model") or baseline_model)
-            baseline_version = prediction.get("model_version")
+            infer_model = str(prediction.get("model") or infer_model)
+            infer_version = prediction.get("model_version")
             if "progress" in prediction:
                 normalized_prediction = {
                     "kind": "progress", "values": prediction["progress"],
@@ -236,10 +236,10 @@ class EvaluationRecord(FrameworkModel):
                 }],
             },
             "target": target,
-            "baseline": {
-                "name": str(value.get("baseline") or "unknown"),
-                "model": baseline_model,
-                "version": baseline_version,
+            "infer": {
+                "name": str(value.get("infer") or "unknown"),
+                "model": infer_model,
+                "version": infer_version,
             },
             "prediction": normalized_prediction,
             "execution": {
@@ -261,14 +261,14 @@ class EvaluationRecord(FrameworkModel):
     def validate_result_state(self):
         # Centralize stage constraints so Optional fields are not unconditionally optional.
         if self.stage == "sampled" and any(
-            value is not None for value in (self.baseline, self.prediction, self.execution)
+            value is not None for value in (self.infer, self.prediction, self.execution)
         ):
-            raise ValueError("A sampled record cannot contain baseline, prediction, or execution results")
+            raise ValueError("A sampled record cannot contain infer, prediction, or execution results")
         if self.stage == "inferred" and self.execution is None:
             raise ValueError("An inferred record requires execution information")
         if self.execution and self.execution.status == "success":
-            if self.prediction is None or self.baseline is None:
-                raise ValueError("A successful inferred record requires baseline and prediction")
+            if self.prediction is None or self.infer is None:
+                raise ValueError("A successful inferred record requires infer and prediction")
         if self.execution and self.execution.status == "error" and not self.execution.error:
             raise ValueError("An error inferred record requires an error message")
         return self

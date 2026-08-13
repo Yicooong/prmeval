@@ -2,7 +2,7 @@
 
 from .core.config import EvalConfig
 from .core.schemas import (
-    BaselineIdentity,
+    InferIdentity,
     DatasetIdentity,
     EvaluationRecord,
     EvaluationIdentity,
@@ -19,12 +19,12 @@ from .core.schemas import (
     Trajectory,
     ValuePayload,
 )
-from .evaluation.runner import Evaluator
+from .core.runner import Evaluator
 
 __all__ = [
     "EvalConfig",
     "Evaluator",
-    "BaselineIdentity",
+    "InferIdentity",
     "DatasetIdentity",
     "EvaluationRecord",
     "EvaluationIdentity",

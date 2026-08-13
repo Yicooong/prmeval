@@ -1,6 +1,8 @@
-"""Stable configuration, schemas, and component registries."""
+"""Configuration, schemas, artifacts, registries, and evaluation orchestration."""
 
-from .config import BaselineConfig, EvalConfig, SamplingConfig
+from .artifacts import load_sample_artifacts, validate_sample_artifacts, write_sample_artifacts
+from .config import EvalConfig, InferConfig, SamplingConfig
+from .runner import Evaluator
 from .schemas import (
     EvaluationRecord,
     PreferencePrediction,
@@ -12,9 +14,10 @@ from .schemas import (
 )
 
 __all__ = [
-    "BaselineConfig",
     "EvalConfig",
+    "Evaluator",
     "EvaluationRecord",
+    "InferConfig",
     "PreferencePrediction",
     "PreferenceSample",
     "ProgressPrediction",
@@ -22,4 +25,7 @@ __all__ = [
     "RunManifest",
     "SamplingConfig",
     "Trajectory",
+    "load_sample_artifacts",
+    "validate_sample_artifacts",
+    "write_sample_artifacts",
 ]

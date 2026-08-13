@@ -2,27 +2,35 @@
 
 ## Project Structure & Module Organization
 
-`prmeval/` contains the Python package. Schemas and configuration live in `prmeval/core/`; dataset adapters and sampling are in `prmeval/data/`; remote model integrations are in `prmeval/baselines/`; orchestration and artifacts are in `prmeval/evaluation/`; and metrics are in `prmeval/metrics/`. CLI entry points are `prmeval/cli.py` and `prmeval/data/prepare.py`.
+`prmeval/` contains the evaluation package. Schemas, registries, configuration, orchestration, and artifact handling live in `prmeval/core/`; dataset adapters and Stage 1 sampling are in `prmeval/sample/`; remote model integrations and Stage 2 inference are in `prmeval/infer/`; and Stage 3 metrics are in `prmeval/metrics/`. The main CLI is `prmeval/cli.py`; dataset preprocessing also exposes `prmeval/sample/prepare.py`.
 
-Keep tests in `tests/`, with reusable inputs under `tests/fixtures/`. Evaluation and preprocessing YAML files belong in `configs/eval/` and `configs/data/`. Put runnable demonstrations and their expected artifacts in `examples/`; maintain protocol documentation in `docs/`.
+`dataset_unify/` is a separate raw-dataset conversion tool. Its loaders are in `dataset_unify/dataset_loaders/`, converter registration is in `dataset_unify/converters.py`, conversion YAML files are in `dataset_unify/configs/data_gen_configs/`, and source-specific instructions are in `dataset_unify/dataset_guides/`. Do not make PRMEval import dataset-specific loaders directly.
+
+Keep tests in `tests/`, with reusable inputs under `tests/fixtures/`. Evaluation YAML files belong in `configs/eval/`. Put runnable smoke examples and checked-in expected artifacts in `examples/`; maintain protocol and configuration documentation in `docs/`.
 
 ## Build, Test, and Development Commands
 
 - `pip install -e '.[dev]'` installs the package in editable mode with pytest and Ruff.
-- `pip install -e '.[viz]'` adds plotting support; dataset, video, and image dependencies are installed by default.
 - `pytest` runs the complete test suite.
 - `ruff check .` checks imports, style, common bugs, and Python modernization rules.
 - `ruff format --check .` verifies formatting; use `ruff format .` to apply it.
 - `python -m prmeval.cli --help` lists evaluation commands.
-- `python -m prmeval.cli run --config configs/eval/test_stage.yaml` runs the three-stage smoke pipeline; inference requires a configured remote endpoint and API key.
+- `python -m prmeval.cli sample --config configs/eval/test_stage.yaml` runs Stage 1; replace `sample` with `infer` or `metrics` for Stages 2 and 3.
+- `python -m prmeval.cli run --config configs/eval/test_stage.yaml` runs all three stages; inference requires configured `BASE_URL`, `MODEL_ID`, and, when applicable, `OPENAI_API_KEY` environment variables.
+- `python -m dataset_unify.generate_hf_dataset --config_path=<yaml>` converts a supported raw dataset to the standard local Hugging Face Dataset format.
+- `python -m dataset_unify.validate_dataset <dataset_dir>` validates a converted dataset before evaluation.
 
 ## Coding Style & Naming Conventions
 
-Use four-space indentation, Python 3.10+ syntax, type hints, and a 120-character line limit. Ruff enforces `E`, `W`, `F`, `I`, `B`, `C4`, `UP`, and `RUF` rules. Use `snake_case` for functions, modules, and variables; `PascalCase` for classes; and descriptive YAML names such as `full_smoke_jsonl.yaml`. Preserve the staged record contract (`sampled` to `inferred` to metrics) when changing schemas or artifacts.
+Use four-space indentation, Python 3.10+ syntax, type hints, and a 120-character line limit. Ruff enforces `E`, `W`, `F`, `I`, `B`, `C4`, `UP`, and `RUF` rules. Use `snake_case` for functions, modules, and variables; `PascalCase` for classes; and descriptive YAML names.
+
+Preserve the `bench.record.v1` `EvaluationRecord` contract across sampled and inferred artifacts. New datasets, samplers, infer adapters, and metrics should use the registries in `prmeval/core/registry.py`. Dataset-unification converters should use the registry in `dataset_unify/registry.py` and produce the fixed schema through `build_standard_dataset()` rather than adding source-specific fields to PRMEval.
 
 ## Testing Guidelines
 
-Tests currently use `unittest.TestCase` and are collected by pytest. Name files `test_*.py` and methods `test_<behavior>`. Add focused regression tests for schema validation, adapters, samplers, remote request contracts, and metric outputs. Prefer mocks and small checked-in fixtures over live services. Run `pytest` and Ruff before submitting changes; no formal coverage threshold is configured.
+Tests use `unittest.TestCase` and are collected by pytest. Name files `test_*.py` and methods `test_<behavior>`. Add focused regression tests for schema validation, adapters, samplers, registries, remote request contracts, metric outputs, and dataset-unification contracts. Prefer mocks and small checked-in fixtures over live services. The dataset-unification contract test may generate a minimal local MP4 but must not depend on external datasets or services.
+
+Run `pytest`, `ruff check .`, and `ruff format --check .` before submitting changes. For targeted iteration, use commands such as `pytest tests/test_evaluation.py` or `pytest tests/test_dataset_unify_contract.py`.
 
 ## Commit & Pull Request Guidelines
 
@@ -30,4 +38,6 @@ History is minimal and does not establish a strict commit format. Write concise,
 
 ## Security & Configuration
 
-Never commit API keys, credentials, private endpoints, generated datasets, or `evaluation_output/`. Reference secrets by environment-variable name, such as `api_key: OPENAI_API_KEY`, and document any new required variables.
+Never commit API keys, credentials, private endpoints, generated datasets, decoded media, or `evaluation_output/`. Reference secrets by environment-variable name, such as `api_key: OPENAI_API_KEY`, and document any new required variables. The CLI does not load `.env` automatically.
+
+Treat configuration and schema changes as compatibility-sensitive. Update the relevant files in `docs/`, example YAML, smoke artifacts, and regression tests together. Keep generated dataset paths local and ensure the unified `frames` field is relative to the saved Dataset root.

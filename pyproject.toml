@@ -18,12 +18,9 @@ dependencies = [
 
 [project.scripts]
 prmeval-eval = "prmeval.cli:main"
-prmeval-data-preprocess = "prmeval.data.prepare:main"
+prmeval-data-preprocess = "prmeval.sample.prepare:main"
 
 [project.optional-dependencies]
-viz = [
-    "matplotlib>=3.5",
-]
 dev = [
     "pytest>=8.0",
     "ruff>=0.8",

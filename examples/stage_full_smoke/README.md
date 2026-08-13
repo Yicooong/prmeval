@@ -4,7 +4,7 @@
 
 - dataset adapter：`jsonl`
 - sampler/evaluation type：`reward_alignment`
-- baseline：`progress_test`
+- infer：`progress_test`
 - metric：`reward_alignment`
 
 配置文件为 `configs/eval/full_smoke_jsonl.yaml`。测试只读取一条 trajectory，并只发起一次远程模型请求。

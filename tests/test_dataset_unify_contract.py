@@ -10,8 +10,8 @@ import numpy as np
 
 from dataset_unify.hf_schema import STANDARD_DATASET_FIELDS, build_standard_dataset
 from prmeval.core.config import SamplingConfig
-from prmeval.data.adapters import HuggingfaceDatasetAdapter
-from prmeval.data.samplers import RewardAlignmentSampler
+from prmeval.sample.adapters import HuggingfaceDatasetAdapter
+from prmeval.sample.samplers import RewardAlignmentSampler
 
 
 class DatasetUnifyContractTest(unittest.TestCase):

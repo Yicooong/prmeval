@@ -35,10 +35,10 @@ class Registry(Generic[T]):
 
 DATASETS: Registry[Any] = Registry("dataset")
 SAMPLERS: Registry[Any] = Registry("sampler")
-BASELINES: Registry[Any] = Registry("baseline")
+INFERS: Registry[Any] = Registry("infer")
 METRICS: Registry[Any] = Registry("metric")
 
 register_dataset = DATASETS.register
 register_sampler = SAMPLERS.register
-register_baseline = BASELINES.register
+register_infer = INFERS.register
 register_metric = METRICS.register

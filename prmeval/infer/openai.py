@@ -3,8 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..core.schemas import EvaluationSample, PreferencePrediction, PreferenceSample, ProgressPrediction, ProgressSample
-from .base import RemoteBaseline, RemoteError, parse_json_content
-from .images import vision_content
+from .base import RemoteError, RemoteInfer, parse_json_content, vision_content
 
 
 PROGRESS_SCHEMA = {
@@ -92,7 +91,7 @@ def _validate_number(field: str, value: Any, definition: dict[str, Any]) -> None
         raise RemoteError(f"Field '{field}' is outside the allowed range")
 
 
-class OpenAIChatBaseline(RemoteBaseline):
+class OpenAIChatInfer(RemoteInfer):
     transport = "openai_chat"
     capabilities = {"progress", "preference"}
 

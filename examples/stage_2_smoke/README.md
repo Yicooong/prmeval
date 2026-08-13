@@ -6,7 +6,7 @@
 - `sample_frames/*.npz`：Stage 2 实际读取的帧数组；
 - `samples.manifest.json`：Stage 1 生成该 bundle 时的采样清单。
 
-`samples.jsonl` 中不包含 `baseline`、`prediction` 或 `execution`。推理后，这些字段才会出现在指定的 `predictions.jsonl` 中。
+`samples.jsonl` 中不包含 `infer`、`prediction` 或 `execution`。推理后，这些字段才会出现在指定的 `predictions.jsonl` 中。
 
 先验证 Stage 2 输入及 NPZ 校验和：
 
@@ -15,7 +15,7 @@ python -m prmeval.cli validate-samples \
   --samples examples/stage_2_smoke/samples.jsonl
 ```s
 
-调用 `progress_test` baseline：
+调用 `progress_test` infer：
 
 ```bash
 export OPENAI_API_KEY='your-key'
