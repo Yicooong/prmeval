@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import io
 import json
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import httpx
 import numpy as np
 
+from prmeval.cli import build_parser, main as cli_main
 from prmeval.core.artifacts import load_sample_artifacts, validate_sample_artifacts
 from prmeval.core.config import EvalConfig, InferConfig, SamplingConfig
 from prmeval.core.registry import Registry
@@ -74,6 +77,42 @@ class _BodyResponse:
 
 
 class FrameworkTest(unittest.TestCase):
+    def test_stage_commands_accept_no_progress(self):
+        parser = build_parser()
+        for command in ("run", "sample", "infer", "metrics"):
+            enabled = parser.parse_args([command, "--config", "config.yaml"])
+            disabled = parser.parse_args([command, "--config", "config.yaml", "--no-progress"])
+            self.assertFalse(enabled.no_progress)
+            self.assertTrue(disabled.no_progress)
+
+    def test_cli_enables_progress_and_keeps_summary_on_stdout(self):
+        config = MagicMock()
+        evaluator = MagicMock()
+        evaluator.run.return_value = {"metrics": {}, "coverage": {"successful": 0}}
+        stdout = io.StringIO()
+        with (
+            patch("prmeval.cli.EvalConfig.from_yaml", return_value=config),
+            patch("prmeval.cli.Evaluator", return_value=evaluator) as evaluator_class,
+            patch("prmeval.cli.logging.basicConfig"),
+            redirect_stdout(stdout),
+        ):
+            self.assertEqual(cli_main(["run", "--config", "config.yaml"]), 0)
+        evaluator_class.assert_called_once_with(config, show_progress=True)
+        self.assertEqual(json.loads(stdout.getvalue()), evaluator.run.return_value)
+
+    def test_cli_no_progress_is_forwarded_to_evaluator(self):
+        config = MagicMock()
+        evaluator = MagicMock()
+        evaluator.sample.return_value = {"samples": 1}
+        with (
+            patch("prmeval.cli.EvalConfig.from_yaml", return_value=config),
+            patch("prmeval.cli.Evaluator", return_value=evaluator) as evaluator_class,
+            patch("prmeval.cli.logging.basicConfig"),
+            redirect_stdout(io.StringIO()),
+        ):
+            self.assertEqual(cli_main(["sample", "--config", "config.yaml", "--no-progress"]), 0)
+        evaluator_class.assert_called_once_with(config, show_progress=False)
+
     def test_dataset_loading_fields_belong_to_sampling_config(self):
         config = EvalConfig(
             sampling=SamplingConfig(
@@ -392,6 +431,85 @@ infer:
                 changed.infer.model_id = "different-model"
                 with self.assertRaises(RuntimeError):
                     Evaluator(changed).run()
+
+    def test_run_tracks_all_three_stages_in_interactive_terminal(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = EvalConfig(
+                sampling=SamplingConfig(
+                    dataset_name="fixture",
+                    adapter="jsonl",
+                    paths=[str(GOLDEN_FIXTURE)],
+                    eval_types=["reward_alignment"],
+                    max_frames=3,
+                ),
+                infer=InferConfig(
+                    name="gvl",
+                    base_url="http://mock-service",
+                    model_id="mock-vlm",
+                    max_retries=0,
+                ),
+                output_dir=tmp,
+                run_name="progress",
+            )
+
+            with (
+                patch("prmeval.core.runner.sys.stderr") as stderr,
+                patch("prmeval.core.runner.tqdm", side_effect=lambda iterable, **_kwargs: iterable) as progress,
+                patch("httpx.post", side_effect=lambda _url, **kwargs: _MockResponse(kwargs["json"])),
+            ):
+                stderr.isatty.return_value = True
+                summary = Evaluator(config, show_progress=True).run()
+
+            self.assertEqual(summary["coverage"]["successful"], 1)
+            calls = {call.kwargs["desc"]: call.kwargs for call in progress.call_args_list}
+            self.assertEqual(calls["Stage 1/3 Write samples"]["total"], 1)
+            self.assertEqual(calls["Stage 2/3 Infer (skipped=0)"]["total"], 1)
+            self.assertEqual(calls["Stage 3/3 Compute metrics"]["total"], 1)
+            self.assertIn("Stage 1/3 Load trajectories", calls)
+            self.assertIn("Stage 1/3 Generate samples", calls)
+
+            with (
+                patch("prmeval.core.runner.sys.stderr") as stderr,
+                patch("prmeval.core.runner.tqdm", side_effect=lambda iterable, **_kwargs: iterable) as progress,
+                patch("httpx.post") as post,
+            ):
+                stderr.isatty.return_value = True
+                resumed = Evaluator(config, show_progress=True).run()
+            post.assert_not_called()
+            self.assertEqual(resumed["coverage"]["skipped"], 1)
+            infer_call = next(
+                call for call in progress.call_args_list if call.kwargs["desc"] == "Stage 2/3 Infer (skipped=1)"
+            )
+            self.assertEqual(infer_call.kwargs["total"], 0)
+
+    def test_python_api_is_quiet_by_default_and_non_tty_disables_progress(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = EvalConfig(
+                sampling=SamplingConfig(
+                    dataset_name="fixture",
+                    adapter="jsonl",
+                    paths=[str(GOLDEN_FIXTURE)],
+                    eval_types=["reward_alignment"],
+                    max_frames=3,
+                ),
+                infer=InferConfig(name="gvl", base_url="http://unused", model_id="unused"),
+                output_dir=tmp,
+                run_name="quiet",
+            )
+            with patch("prmeval.core.runner.tqdm") as progress:
+                Evaluator(config).sample()
+            progress.assert_not_called()
+
+            config.run_name = "non-tty"
+            with (
+                patch("prmeval.core.runner.sys.stderr") as stderr,
+                patch("prmeval.core.runner.tqdm") as progress,
+                self.assertLogs("prmeval.core.runner", level="INFO") as logs,
+            ):
+                stderr.isatty.return_value = False
+                Evaluator(config, show_progress=True).sample()
+            progress.assert_not_called()
+            self.assertTrue(any("Stage 1/3 Sample completed" in message for message in logs.output))
 
     def test_three_stages_are_independently_runnable(self):
         _MockResponse.calls = 0

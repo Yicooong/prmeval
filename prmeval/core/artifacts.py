@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections import Counter
+from collections.abc import Iterable
 from pathlib import Path
 
 import numpy as np
@@ -143,12 +144,13 @@ def _materialize_record(record: EvaluationRecord, bundle_dir: Path) -> Evaluatio
 
 
 def write_sample_artifacts(
-    samples: list[EvaluationSample], path: Path, dataset_name: str = "unknown"
+    samples: Iterable[EvaluationSample], path: Path, dataset_name: str = "unknown"
 ) -> dict:
     """Write Stage-1 records using the same schema later enriched by inference."""
     path.parent.mkdir(parents=True, exist_ok=True)
     seen: set[str] = set()
     counts: Counter[str] = Counter()
+    sample_count = 0
     with path.open("w", encoding="utf-8") as handle:
         for sample in samples:
             if sample.sample_id in seen:
@@ -157,9 +159,10 @@ def write_sample_artifacts(
             record = _materialize_record(sample_to_record(sample, dataset_name), path.parent)
             handle.write(json.dumps(jsonable(record), ensure_ascii=False) + "\n")
             counts[record.evaluation.type] += 1
+            sample_count += 1
     return {
         "schema_version": SAMPLE_SCHEMA_VERSION,
-        "samples": len(samples),
+        "samples": sample_count,
         "eval_types": dict(sorted(counts.items())),
         "path": str(path),
     }

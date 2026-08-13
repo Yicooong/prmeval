@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections import defaultdict
+from collections.abc import Iterable
 from typing import Any
 
 import numpy as np
@@ -202,5 +203,5 @@ class ConfusionMatrixMetric(Metric):
         }
 
 
-def compute_metrics(records: list[EvaluationRecord], metric_names: list[str]) -> dict[str, Any]:
+def compute_metrics(records: list[EvaluationRecord], metric_names: Iterable[str]) -> dict[str, Any]:
     return {name: METRICS.get(name)().compute(records) for name in metric_names}

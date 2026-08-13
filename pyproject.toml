@@ -14,6 +14,7 @@ dependencies = [
     "pillow>=9.0",
     "imageio>=2.37",
     "av>=12.0",
+    "tqdm>=4.66",
 ]
 
 [project.scripts]

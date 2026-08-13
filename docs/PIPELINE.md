@@ -180,6 +180,8 @@ Stage 1 sample_id -> Stage 2 sample_id -> Stage 3 明细 sample_id
 
 ## 运行产物与断点续跑
 
+各文件的完整字段、生成条件、自定义输出命名、移动与验证方式见 [全流程运行产物说明](ARTIFACTS.md)。
+
 一次完整运行通常生成：
 
 ```text
@@ -213,6 +215,14 @@ evaluation_output/<run_name>/
 python -m prmeval.cli run --config configs/eval/test_stage.yaml
 ```
 
+CLI 默认向 stderr 输出阶段日志，并在交互式终端中展示各阶段进度：Stage 1 统计读取轨迹、生成样本和写入样本，Stage 2 统计已完成的推理样本，Stage 3 统计已计算的指标。断点续跑时，Stage 2 会同时报告待处理和已跳过的样本数。使用 `--no-progress` 可以关闭动态进度条；普通阶段日志不受影响。非交互式 stderr（例如 CI 或输出重定向）会自动禁用动态条，避免产生重复控制字符。
+
+进度和日志使用 stderr，最终 JSON 摘要使用 stdout。例如下面的命令只将摘要写入文件：
+
+```bash
+python -m prmeval.cli run --config configs/eval/test_stage.yaml > summary.json
+```
+
 也可以通过 Python API 调用：
 
 ```python
@@ -230,4 +240,10 @@ metric_summary = evaluator.evaluate_metrics()
 
 ```python
 summary = Evaluator(config).run()
+```
+
+Python API 默认不显示进度。如需在交互式 Python 终端中开启，可以显式传入：
+
+```python
+summary = Evaluator(config, show_progress=True).run()
 ```

@@ -12,7 +12,7 @@ PRMEval 是一个面向机器人任务进度与偏好模型的远程评测框架
 2. **Infer**：调用远程模型并保存标准化预测结果。
 3. **Metrics**：读取成功的预测记录并计算、聚合指标。
 
-阶段职责、数据协议、运行产物和断点续跑机制见 [三阶段评测流程](docs/PIPELINE.md)，字段定义见 [EvaluationRecord 数据结构](docs/RECORD_SCHEMA.md)。
+阶段职责和数据流见 [三阶段评测流程](docs/PIPELINE.md)，各文件的用途、内容及断点续跑行为见 [全流程运行产物说明](docs/ARTIFACTS.md)，字段定义见 [EvaluationRecord 数据结构](docs/RECORD_SCHEMA.md)。
 
 ## 安装
 
@@ -38,6 +38,18 @@ export MODEL_ID='your-model-id'
 python -m prmeval.cli run --config configs/eval/test_stage.yaml
 ```
 
+命令行会在交互式终端中使用 `tqdm` 分别展示 Sample、Infer 和 Metrics 三个阶段的进度，并输出阶段开始、完成及断点续跑跳过数量。动态进度写入 stderr，最终 JSON 摘要写入 stdout，因此可以安全地重定向结果：
+
+```bash
+python -m prmeval.cli run --config configs/eval/test_stage.yaml > summary.json
+```
+
+在 CI、管道等非交互环境中，动态进度条会自动关闭，阶段日志仍会保留。也可以手动关闭动态进度条：
+
+```bash
+python -m prmeval.cli run --config configs/eval/test_stage.yaml --no-progress
+```
+
 也可以单独运行各阶段：
 
 ```bash
@@ -60,13 +72,12 @@ python -m prmeval.cli list-metrics
 
 - [配置文件说明](docs/CONFIGURATION.md)
 - [三阶段评测流程](docs/PIPELINE.md)
+- [全流程运行产物说明](docs/ARTIFACTS.md)
 - [EvaluationRecord 数据结构](docs/RECORD_SCHEMA.md)
 - [本地数据格式与 Dataset Adapter](docs/DATASETS.md)
 - [原始数据集统一工具](dataset_unify/README.md)
 
 原始数据需要先通过独立的 [`dataset_unify`](dataset_unify/) 工具转换为本地标准 Hugging Face Dataset，再交给 PRMEval 读取。数据统一的字段、配置和新增数据集方法均以该工具自己的文档为准。
-
-
 
 
 

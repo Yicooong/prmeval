@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import platform
 import sys
 import time
+from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable
+from typing import TypeVar
+
+from tqdm import tqdm
 
 from ..infer.adapters import create_infer
 from ..metrics.builtins import compute_metrics
@@ -24,6 +28,10 @@ from .schemas import (
     ValuePayload,
     jsonable,
 )
+
+
+logger = logging.getLogger(__name__)
+T = TypeVar("T")
 
 
 def _fingerprint(config: EvalConfig) -> str:
@@ -68,8 +76,9 @@ def _file_sha256(path: Path) -> str:
 
 
 class Evaluator:
-    def __init__(self, config: EvalConfig):
+    def __init__(self, config: EvalConfig, show_progress: bool = False):
         self.config = config
+        self.show_progress = show_progress and sys.stderr.isatty()
         self.fingerprint = _fingerprint(config)
         run_name = config.run_name or self.fingerprint[:12]
         self.output_dir = Path(config.output_dir) / run_name
@@ -79,6 +88,25 @@ class Evaluator:
         self.errors_path = self.output_dir / "errors.jsonl"
         self.inference_summary_path = self.output_dir / "inference_summary.json"
         self.manifest_path = self.output_dir / "run_manifest.json"
+
+    def _progress(
+        self,
+        iterable: Iterable[T],
+        *,
+        description: str,
+        unit: str,
+        total: int | None = None,
+    ) -> Iterable[T]:
+        if not self.show_progress:
+            return iterable
+        return tqdm(
+            iterable,
+            desc=description,
+            unit=unit,
+            total=total,
+            file=sys.stderr,
+            dynamic_ncols=True,
+        )
 
     def _prepare(self, model_info: dict) -> set[str]:
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -184,6 +212,7 @@ class Evaluator:
     def sample(self, samples_path: str | Path | None = None) -> dict:
         """Stage 1: adapt a dataset, sample it, and write the portable sample protocol."""
         destination = Path(samples_path) if samples_path else self.samples_path
+        logger.info("Stage 1/3 Sample started: %s", destination)
         destination.parent.mkdir(parents=True, exist_ok=True)
         manifest_path = (
             self.sample_manifest_path
@@ -198,15 +227,41 @@ class Evaluator:
                     "Sample output contains a different sampling fingerprint: "
                     f"{existing.get('fingerprint')}"
                 )
-            return {**existing["summary"], "reused": True}
+            summary = {**existing["summary"], "reused": True}
+            logger.info(
+                "Stage 1/3 Sample completed: reused %d samples",
+                summary["samples"],
+            )
+            return summary
 
-        trajectories = list(create_dataset(self.config.sampling).load())
-        samples = list(self._samples(trajectories))
+        trajectories = list(
+            self._progress(
+                create_dataset(self.config.sampling).load(),
+                description="Stage 1/3 Load trajectories",
+                unit="trajectory",
+            )
+        )
+        samples = list(
+            self._progress(
+                self._samples(trajectories),
+                description="Stage 1/3 Generate samples",
+                unit="sample",
+            )
+        )
         if not samples:
             raise ValueError(
                 f"Sampling produced no samples for eval types: {', '.join(self.config.sampling.eval_types)}"
             )
-        summary = write_sample_artifacts(samples, destination, self.config.sampling.dataset_name)
+        summary = write_sample_artifacts(
+            self._progress(
+                samples,
+                description="Stage 1/3 Write samples",
+                unit="sample",
+                total=len(samples),
+            ),
+            destination,
+            self.config.sampling.dataset_name,
+        )
         summary.update({"trajectories": len(trajectories), "fingerprint": fingerprint, "reused": False})
         manifest = {
             "schema_version": "prmeval.sample-manifest.v2",
@@ -218,6 +273,11 @@ class Evaluator:
         manifest_path.write_text(
             json.dumps(jsonable(manifest), indent=2, ensure_ascii=False), encoding="utf-8"
         )
+        logger.info(
+            "Stage 1/3 Sample completed: %d trajectories, %d samples",
+            len(trajectories),
+            summary["samples"],
+        )
         return summary
 
     def infer(
@@ -228,6 +288,7 @@ class Evaluator:
         """Stage 2: load only sample artifacts, call the model, and write EvaluationRecords."""
         source = Path(samples_path) if samples_path else self.samples_path
         destination = Path(predictions_path) if predictions_path else self.predictions_path
+        logger.info("Stage 2/3 Infer started: %s", source)
         if destination != self.predictions_path:
             self.predictions_path = destination
             self.errors_path = destination.with_name(f"{destination.stem}.errors.jsonl")
@@ -253,13 +314,24 @@ class Evaluator:
         }
         completed = self._prepare(model_info)
         records_to_run = [record for record in all_records if record.sample_id not in completed]
+        logger.info(
+            "Stage 2/3 Infer workload: %d pending, %d skipped",
+            len(records_to_run),
+            len(completed),
+        )
         new_records: list[EvaluationRecord] = []
         with ThreadPoolExecutor(max_workers=self.config.infer.max_concurrency) as executor:
             future_map = {
                 executor.submit(self._predict, infer, record, source.parent): record
                 for record in records_to_run
             }
-            for future in as_completed(future_map):
+            futures = self._progress(
+                as_completed(future_map),
+                description=f"Stage 2/3 Infer (skipped={len(completed)})",
+                unit="sample",
+                total=len(records_to_run),
+            )
+            for future in futures:
                 record = future.result()
                 new_records.append(record)
                 target = (
@@ -289,11 +361,19 @@ class Evaluator:
         self.inference_summary_path.write_text(
             json.dumps(jsonable(summary), indent=2, ensure_ascii=False), encoding="utf-8"
         )
+        logger.info(
+            "Stage 2/3 Infer completed: %d successful, %d failed, %d new, %d skipped",
+            summary["coverage"]["successful"],
+            summary["coverage"]["failed"],
+            summary["coverage"]["new"],
+            summary["coverage"]["skipped"],
+        )
         return summary
 
     def evaluate_metrics(self, predictions_path: str | Path | None = None) -> dict:
         """Stage 3: compute metrics from complete post-model EvaluationRecords only."""
         source = Path(predictions_path) if predictions_path else self.predictions_path
+        logger.info("Stage 3/3 Metrics started: %s", source)
         records = [EvaluationRecord.model_validate(row) for row in _read_jsonl(source)]
         if not records:
             raise ValueError(f"No successful EvaluationRecord rows found in {source}")
@@ -306,7 +386,15 @@ class Evaluator:
         if len(identities) != len(set(identities)):
             raise ValueError(f"Metric input contains duplicate dataset/infer/sample identities: {source}")
         metric_names = self.config.metrics or self.config.sampling.eval_types
-        metrics = compute_metrics(records, metric_names)
+        metrics = compute_metrics(
+            records,
+            self._progress(
+                metric_names,
+                description="Stage 3/3 Compute metrics",
+                unit="metric",
+                total=len(metric_names),
+            ),
+        )
         if self.inference_summary_path.exists() and source == self.predictions_path:
             inference = json.loads(self.inference_summary_path.read_text(encoding="utf-8"))
             coverage = inference["coverage"]
@@ -331,6 +419,11 @@ class Evaluator:
             self.manifest_path.write_text(
                 json.dumps(jsonable(manifest), indent=2, ensure_ascii=False), encoding="utf-8"
             )
+        logger.info(
+            "Stage 3/3 Metrics completed: %d metrics from %d predictions",
+            len(metrics),
+            len(records),
+        )
         return summary
 
     def run(self) -> dict:
@@ -338,6 +431,7 @@ class Evaluator:
         self.sample()
         inference = self.infer()
         if inference["coverage"]["successful"] == 0:
+            logger.info("Stage 3/3 Metrics skipped: no successful predictions")
             return {"metrics": {}, **inference}
         return self.evaluate_metrics()
 

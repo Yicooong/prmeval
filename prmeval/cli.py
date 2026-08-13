@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
+import sys
 from pathlib import Path
 
 from .core.artifacts import validate_sample_artifacts
@@ -18,16 +20,20 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
     run = sub.add_parser("run", help="Run an evaluation")
     run.add_argument("--config", required=True)
+    run.add_argument("--no-progress", action="store_true", help="Disable terminal progress bars")
     sample = sub.add_parser("sample", help="Stage 1: sample a dataset into bench.record.v1")
     sample.add_argument("--config", required=True)
     sample.add_argument("--output", help="Optional samples.jsonl destination")
+    sample.add_argument("--no-progress", action="store_true", help="Disable terminal progress bars")
     infer = sub.add_parser("infer", help="Stage 2: run a model on sampled data")
     infer.add_argument("--config", required=True)
     infer.add_argument("--samples", help="Optional samples.jsonl source")
     infer.add_argument("--output", help="Optional predictions.jsonl destination")
+    infer.add_argument("--no-progress", action="store_true", help="Disable terminal progress bars")
     stage_metrics = sub.add_parser("metrics", help="Stage 3: compute configured metrics")
     stage_metrics.add_argument("--config", required=True)
     stage_metrics.add_argument("--predictions", help="Optional predictions.jsonl source")
+    stage_metrics.add_argument("--no-progress", action="store_true", help="Disable terminal progress bars")
     sub.add_parser("list-datasets")
     sub.add_parser("list-infers")
     sub.add_parser("list-samplers")
@@ -43,6 +49,11 @@ def build_parser() -> argparse.ArgumentParser:
     metrics.add_argument("--metrics", nargs="+", help="Metric names; defaults to eval types present in the file")
     metrics.add_argument("--output", help="Optional output JSON path")
     return parser
+
+
+def _evaluator(args: argparse.Namespace) -> Evaluator:
+    logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stderr)
+    return Evaluator(EvalConfig.from_yaml(args.config), show_progress=not args.no_progress)
 
 
 def _load_records(path: Path) -> list[EvaluationRecord]:
@@ -108,16 +119,16 @@ def main(argv: list[str] | None = None) -> int:
             output.write_text(rendered + "\n", encoding="utf-8")
         print(rendered)
     elif args.command == "run":
-        summary = Evaluator(EvalConfig.from_yaml(args.config)).run()
+        summary = _evaluator(args).run()
         print(json.dumps(summary, indent=2))
     elif args.command == "sample":
-        summary = Evaluator(EvalConfig.from_yaml(args.config)).sample(args.output)
+        summary = _evaluator(args).sample(args.output)
         print(json.dumps(summary, indent=2, ensure_ascii=False))
     elif args.command == "infer":
-        summary = Evaluator(EvalConfig.from_yaml(args.config)).infer(args.samples, args.output)
+        summary = _evaluator(args).infer(args.samples, args.output)
         print(json.dumps(summary, indent=2, ensure_ascii=False))
     elif args.command == "metrics":
-        summary = Evaluator(EvalConfig.from_yaml(args.config)).evaluate_metrics(args.predictions)
+        summary = _evaluator(args).evaluate_metrics(args.predictions)
         print(json.dumps(summary, indent=2, ensure_ascii=False))
     return 0
 
