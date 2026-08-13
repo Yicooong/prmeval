@@ -79,6 +79,11 @@ python -m prmeval.cli list-metrics
 
 原始数据需要先通过独立的 [`dataset_unify`](dataset_unify/) 工具转换为本地标准 Hugging Face Dataset，再交给 PRMEval 读取。数据统一的字段、配置和新增数据集方法均以该工具自己的文档为准。
 
+## 致谢与来源说明
+
+本项目基于开源项目 [Robometer](https://github.com/robometer/robometer) 进行重构与扩展。
+
+感谢 Robometer 项目的作者和贡献者开源其代码。本仓库中的部分实现来源于 Robometer，并在此基础上进行了代码结构重组、重构以及功能扩展，以适配本项目的具体需求。
 
 
 
