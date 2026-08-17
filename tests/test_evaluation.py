@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import json
+import random
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -11,7 +13,8 @@ from unittest.mock import MagicMock, patch
 import httpx
 import numpy as np
 
-from prmeval.cli import build_parser, main as cli_main
+from prmeval.cli import build_parser
+from prmeval.cli import main as cli_main
 from prmeval.core.artifacts import load_sample_artifacts, validate_sample_artifacts
 from prmeval.core.config import EvalConfig, InferConfig, SamplingConfig
 from prmeval.core.registry import Registry
@@ -24,17 +27,28 @@ from prmeval.core.schemas import (
     Trajectory,
 )
 from prmeval.infer.adapters import create_infer
-from prmeval.infer.openai import OpenAIChatInfer, PROGRESS_SCHEMA
+from prmeval.infer.base import RemoteError
+from prmeval.infer.openai import PROGRESS_SCHEMA, OpenAIChatInfer
 from prmeval.infer.specialized import SpecializedInfer, SpecializedRequest, SpecializedResponse
 from prmeval.metrics.builtins import compute_metrics
 from prmeval.sample.prepare import _uniform_indices, _video_frames
 from prmeval.sample.progress import compute_progress
 from prmeval.sample.samplers import ConfusionMatrixSampler, QualityPreferenceSampler, RewardAlignmentSampler
 
-
 PIXEL = "data:image/jpeg;base64,/9j/2Q=="
 GOLDEN_FIXTURE = Path(__file__).parent / "fixtures" / "rbm_1m_ood_micro.jsonl"
 METRICS_SMOKE_FIXTURE = Path(__file__).parents[1] / "examples" / "stage_3_smoke" / "predictions.jsonl"
+
+
+def _make_progress_sample(num_frames: int = 3, sample_id: str = "progress-sample") -> ProgressSample:
+    return ProgressSample(
+        sample_id=sample_id,
+        eval_type="reward_alignment",
+        trajectory=Trajectory(
+            id="trajectory", task="put the cup on the plate",
+            frames=[PIXEL] * num_frames, data_source="fixture",
+        ),
+    )
 
 
 class _MockResponse:
@@ -43,15 +57,25 @@ class _MockResponse:
     def __init__(self, payload):
         type(self).calls += 1
         schema = payload["response_format"]["json_schema"]
-        image_count = schema["schema"]["properties"]["progress"].get("minItems", sum(
-            item.get("type") == "image_url" for message in payload["messages"]
-            for item in message["content"] if isinstance(message["content"], list)
-        ))
+        if schema["name"] == "gvl_progress_prediction":
+            image_count = schema["schema"]["properties"]["frames"]["minItems"]
+            result = {"frames": [
+                {
+                    "frame_number": i + 1,
+                    "frame_description": f"frame {i + 1}",
+                    "task_completion_percentage": 100 * i / max(1, image_count - 1),
+                }
+                for i in range(image_count)
+            ]}
+        else:
+            image_count = schema["schema"]["properties"]["progress"].get("minItems", sum(
+                item.get("type") == "image_url" for message in payload["messages"]
+                for item in message["content"] if isinstance(message["content"], list)
+            ))
+            result = {"progress": [i / max(1, image_count - 1) for i in range(image_count)]}
         self._body = {
             "id": "completion-1",
-            "choices": [{"message": {"content": json.dumps({
-                "progress": [i / max(1, image_count - 1) for i in range(image_count)]
-            })}}],
+            "choices": [{"message": {"content": json.dumps(result)}}],
         }
         self.status_code = 200
 
@@ -430,6 +454,167 @@ infer:
         )
         self.assertEqual(progress_definition["minItems"], 3)
         self.assertEqual(progress_definition["maxItems"], 3)
+
+    def test_progress_baselines_use_openai_chat_transport(self):
+        for name in ("gvl", "roboreward", "robodopamine", "topreward", "vlac", "rbm", "rewind"):
+            infer = create_infer(InferConfig(
+                name=name, transport="openai_chat", base_url="http://service/v1", model_id="model"
+            ))
+            self.assertEqual(infer.transport, "openai_chat")
+            self.assertEqual(infer.capabilities, {"progress"})
+        with self.assertRaisesRegex(ValueError, "openai_chat"):
+            create_infer(InferConfig(
+                name="rbm", transport="specialized", base_url="http://service/v1", model_id="model"
+            ))
+
+    def test_gvl_deterministic_shuffle_and_percentage_mapping(self):
+        sample = _make_progress_sample(sample_id="stable-gvl-sample")
+        payloads = []
+
+        def mock_post(_url, **kwargs):
+            payloads.append(kwargs["json"])
+            body = {"frames": [
+                {"frame_number": 1, "frame_description": "one", "task_completion_percentage": 10},
+                {"frame_number": 2, "frame_description": "two", "task_completion_percentage": 50},
+                {"frame_number": 3, "frame_description": "three", "task_completion_percentage": 90},
+            ]}
+            return _BodyResponse({"choices": [{"message": {"content": json.dumps(body)}}]})
+
+        predictions = []
+        with patch("httpx.post", side_effect=mock_post):
+            for _ in range(2):
+                infer = create_infer(InferConfig(
+                    name="gvl", base_url="http://service/v1", model_id="model", max_retries=0
+                ))
+                predictions.append(infer.predict(sample).progress)
+
+        order = list(range(3))
+        random.Random(int(hashlib.sha256(sample.sample_id.encode()).hexdigest()[:16], 16)).shuffle(order)
+        expected = [0.0] * 3
+        for presented, original in enumerate(order):
+            expected[original] = [0.1, 0.5, 0.9][presented]
+        self.assertEqual(predictions, [expected, expected])
+        self.assertEqual(payloads[0]["messages"], payloads[1]["messages"])
+        self.assertEqual(payloads[0]["response_format"]["json_schema"]["name"], "gvl_progress_prediction")
+
+    def test_roboreward_maps_discrete_score_to_all_frames(self):
+        infer = create_infer(InferConfig(
+            name="roboreward", base_url="http://service/v1", model_id="model", max_retries=0
+        ))
+        captured = {}
+
+        def mock_post(_url, **kwargs):
+            captured.update(kwargs["json"])
+            return _BodyResponse({"choices": [{"message": {"content": '{"score":4}'}}]})
+
+        with patch("httpx.post", side_effect=mock_post):
+            prediction = infer.predict(_make_progress_sample(3))
+        self.assertEqual(prediction.progress, [0.75, 0.75, 0.75])
+        self.assertEqual(sum(item.get("type") == "image_url" for item in captured["messages"][0]["content"]), 3)
+
+    def test_robodopamine_incremental_protocol_and_padding(self):
+        infer = create_infer(InferConfig(
+            name="robodopamine", base_url="http://service/v1", model_id="model", max_retries=0,
+            options={"eval_mode": "incremental", "frame_interval": 2},
+        ))
+        payloads = []
+        responses = [50, -50]
+
+        def mock_post(_url, **kwargs):
+            payloads.append(kwargs["json"])
+            value = responses.pop(0)
+            return _BodyResponse({
+                "choices": [{"message": {"content": json.dumps({"relative_change_percent": value})}}]
+            })
+
+        with patch("httpx.post", side_effect=mock_post):
+            prediction = infer.predict(_make_progress_sample(4))
+        self.assertEqual(prediction.progress, [0.0, 0.5, 0.25, 0.25])
+        self.assertEqual(len(payloads), 2)
+        for payload in payloads:
+            images = [item for item in payload["messages"][0]["content"] if item.get("type") == "image_url"]
+            self.assertEqual(len(images), 8)
+        self.assertEqual([item["after_index"] for item in prediction.raw_response], [2, 3])
+
+    def test_robodopamine_forward_and_backward_modes(self):
+        cases = [
+            ("forward", [25, 75], [0.0, 0.25, 0.75]),
+            ("backward", [-75, -25], [0.0, 0.25, 0.75]),
+        ]
+        for mode, scores, expected in cases:
+            infer = create_infer(InferConfig(
+                name="robodopamine", base_url="http://service/v1", model_id="model", max_retries=0,
+                options={"eval_mode": mode},
+            ))
+            remaining = list(scores)
+
+            def mock_post(_url, remaining=remaining, **_kwargs):
+                return _BodyResponse({"choices": [{"message": {"content": json.dumps({
+                    "relative_change_percent": remaining.pop(0)
+                })}}]})
+
+            with patch("httpx.post", side_effect=mock_post):
+                self.assertEqual(infer.predict(_make_progress_sample(3)).progress, expected)
+
+    def test_topreward_uses_prefix_logprobs_and_interpolates(self):
+        infer = create_infer(InferConfig(
+            name="topreward", base_url="http://service/v1", model_id="model", max_retries=0,
+            options={"num_prefix_samples": 3},
+        ))
+        payloads = []
+        rewards = [-3.0, -2.0, -1.0]
+
+        def mock_post(_url, **kwargs):
+            payloads.append(kwargs["json"])
+            reward = rewards.pop(0)
+            return _BodyResponse({"choices": [{
+                "message": {"content": "False"},
+                "logprobs": {"content": [{
+                    "token": "False", "logprob": -0.1,
+                    "top_logprobs": [{"token": " True", "logprob": reward}],
+                }]},
+            }]})
+
+        with patch("httpx.post", side_effect=mock_post):
+            prediction = infer.predict(_make_progress_sample(4))
+        self.assertEqual(prediction.progress, [0.0, 0.5, 0.75, 1.0])
+        self.assertEqual([item["prefix_length"] for item in prediction.raw_response], [1, 2, 4])
+        self.assertTrue(all(payload["logprobs"] for payload in payloads))
+        self.assertTrue(all(payload["top_logprobs"] == 20 for payload in payloads))
+
+    def test_topreward_rejects_response_without_true_logprob(self):
+        infer = create_infer(InferConfig(
+            name="topreward", base_url="http://service/v1", model_id="model", max_retries=0
+        ))
+        body = {"choices": [{
+            "message": {"content": "False"},
+            "logprobs": {"content": [{"token": "False", "logprob": -0.1, "top_logprobs": []}]},
+        }]}
+        with patch("httpx.post", return_value=_BodyResponse(body)):
+            with self.assertRaisesRegex(RemoteError, "True logprob"):
+                infer.predict(_make_progress_sample(3))
+
+    def test_vlac_normalizes_percentages_and_pads_last_value(self):
+        infer = create_infer(InferConfig(
+            name="vlac", base_url="http://service/v1", model_id="model", max_retries=0
+        ))
+        body = {"choices": [{"message": {"content": '{"progress":[0,50]}'}}]}
+        with patch("httpx.post", return_value=_BodyResponse(body)):
+            prediction = infer.predict(_make_progress_sample(3))
+        self.assertEqual(prediction.progress, [0.0, 0.5, 0.5])
+
+    def test_rbm_and_rewind_require_exact_progress_length(self):
+        for name in ("rbm", "rewind"):
+            infer = create_infer(InferConfig(
+                name=name, base_url="http://service/v1", model_id="model", max_retries=0
+            ))
+            good = {"choices": [{"message": {"content": '{"progress":[0,1]}'}}]}
+            with patch("httpx.post", return_value=_BodyResponse(good)):
+                self.assertEqual(infer.predict(_make_progress_sample(2)).progress, [0.0, 1.0])
+            bad = {"choices": [{"message": {"content": '{"progress":[0]}'}}]}
+            with patch("httpx.post", return_value=_BodyResponse(bad)):
+                with self.assertRaisesRegex(RemoteError, "invalid length"):
+                    infer.predict(_make_progress_sample(2))
 
     def test_runner_resume_and_metrics(self):
         _MockResponse.calls = 0

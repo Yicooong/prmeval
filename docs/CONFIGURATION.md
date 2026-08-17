@@ -81,6 +81,40 @@ resume: false
 | `max_tokens` | 单次响应的最大 token 数 |
 | `options` | 传给具体 infer adapter 的扩展配置 |
 
+内置的 `gvl`、`roboreward`、`robodopamine`、`topreward`、`vlac`、`rbm`、`rewind` 以及 `rlvlmf`
+均使用 `transport: openai_chat` 和 `POST /v1/chat/completions`。PRMEval 只负责组织提示、图片和结果归一化，
+不会在本地加载模型或 checkpoint。旧的 `specialized` transport 仍可供自定义代码使用，但不能配置给上述
+七个内置 progress infer。
+
+各 progress infer 的远程调用行为如下：
+
+| infer | 每个样本的调用方式 | 标准化输出 |
+|---|---|---|
+| `gvl` | 初始帧加按 sample ID 固定乱序的全部查询帧，单次请求 | 逐帧 0–100 百分比恢复原序后除以 100 |
+| `roboreward` | 完整轨迹单次请求 | 1–5 分数映射为 `(score - 1) / 4` 并复制到全部帧 |
+| `robodopamine` | 每个选中 transition 一次 8 图请求 | 按 incremental/forward/backward 公式累积 |
+| `topreward` | 每个选中 trajectory prefix 一次请求 | True logprob 归一化并插值到全部帧 |
+| `vlac` | 完整有序轨迹单次请求 | critic value 归一化，并按末值补齐或截断 |
+| `rbm` / `rewind` | 完整有序轨迹单次请求 | 与输入严格等长的 `[0,1]` progress curve |
+
+`robodopamine` 支持以下 `options`：
+
+```yaml
+infer:
+  name: robodopamine
+  transport: openai_chat
+  options:
+    eval_mode: incremental  # incremental、forward 或 backward
+    frame_interval: 1       # 正整数，默认逐帧 transition
+```
+
+`topreward` 可通过 `options.num_prefix_samples` 设置 prefix 数量，默认值为 15。对应的 OpenAI-compatible
+服务必须支持请求参数 `logprobs: true`、`top_logprobs: 20`，并保证返回的生成 token 或候选 token 中包含
+`True` 或带前导空格的 ` True`；否则该样本会严格失败并写入 `errors.jsonl`。
+
+模型的帧数限制统一由 `sampling.max_frames` 控制。Infer 不会再次抽帧，以免 prediction、输入帧和 target
+progress 失去对齐关系。
+
 推荐只在配置中保存环境变量名：
 
 ```yaml

@@ -104,7 +104,13 @@ stage = inferred
 {"progress": [0.0, 0.5, 1.0]}
 ```
 
-GVL、RL-VLM-F、RoboReward 和 RoboDopamine 同样使用 OpenAI-compatible `/v1/chat/completions`。RBM/ReWiND、TOPReward 和 VLAC 使用专用的 `POST /v1/evaluations` 协议，其 request/response schema 位于 `prmeval.infer.specialized`。
+GVL、RL-VLM-F、RoboReward、RoboDopamine、TOPReward、VLAC、RBM 和 ReWiND 都使用 OpenAI-compatible
+`POST /v1/chat/completions`。其中 TOPReward 还要求服务支持 `logprobs` 和 `top_logprobs`，并在生成 token
+或候选 token 中返回 `True` 的原始 logprob。旧的 `prmeval.infer.specialized` 协议只作为扩展兼容层保留，
+不再是这些内置 infer 的传输方式。
+
+Stage 2 不会对帧重新采样。模型允许的最大帧数应通过 Stage 1 的 `sampling.max_frames` 设置，使发送给模型的
+帧、target progress 和返回曲线始终一一对应。
 
 服务地址、认证、模型、并发和 prompt 配置见 [配置文件说明](CONFIGURATION.md#infer)。
 
