@@ -1,6 +1,6 @@
 # PRMEval 机器人奖励模型评测框架
 
-PRMEval 是一个面向机器人任务进度与偏好模型的远程评测框架。它读取本地数据集，构造统一评测样本，调用远程模型，并计算评测指标。
+PRMEval 是一个面向机器人任务进度与偏好模型的评测框架。它读取本地数据集，构造统一评测样本，通过本地 Hugging Face 模型或远程服务推理，并计算评测指标。
 
 ![PRMEval 架构图](assert/arch.png)
 
@@ -9,7 +9,7 @@ PRMEval 是一个面向机器人任务进度与偏好模型的远程评测框架
 评测由三个可独立运行和验证的阶段组成：
 
 1. **Sample**：读取数据集、抽帧并生成统一的 `EvaluationRecord`。
-2. **Infer**：调用远程模型并保存标准化预测结果。
+2. **Infer**：调用本地或远程模型并保存标准化预测结果。
 3. **Metrics**：读取成功的预测记录并计算、聚合指标。
 
 阶段职责和数据流见 [三阶段评测流程](docs/PIPELINE.md)，各文件的用途、内容及断点续跑行为见 [全流程运行产物说明](docs/ARTIFACTS.md)，字段定义见 [EvaluationRecord 数据结构](docs/RECORD_SCHEMA.md)。
@@ -22,9 +22,17 @@ PRMEval 支持 Python 3.10 及以上版本。
 pip install -e .
 ```
 
+本地 Hugging Face/Qwen-VL 模型使用可选依赖：
+
+```bash
+pip install -e '.[local-hf,local-qwen]'
+```
+
 ## 快速开始
 
-仓库提供了端到端冒烟配置 [`configs/eval/test_stage.yaml`](configs/eval/test_stage.yaml)。运行前设置远程服务信息：
+仓库提供了调用通用远程模型 `progress_test` 的端到端冒烟配置
+[`configs/eval/progress_test_remote.yaml`](configs/eval/progress_test_remote.yaml)。运行前设置 OpenAI-compatible
+服务信息：
 
 ```bash
 export OPENAI_API_KEY='your-api-key'
@@ -35,27 +43,27 @@ export MODEL_ID='your-model-id'
 连续执行采样、推理和指标计算：
 
 ```bash
-python -m prmeval.cli run --config configs/eval/test_stage.yaml
+python -m prmeval.cli run --config configs/eval/progress_test_remote.yaml
 ```
 
 命令行会在交互式终端中使用 `tqdm` 分别展示 Sample、Infer 和 Metrics 三个阶段的进度，并输出阶段开始、完成及断点续跑跳过数量。动态进度写入 stderr，最终 JSON 摘要写入 stdout，因此可以安全地重定向结果：
 
 ```bash
-python -m prmeval.cli run --config configs/eval/test_stage.yaml > summary.json
+python -m prmeval.cli run --config configs/eval/progress_test_remote.yaml > summary.json
 ```
 
 在 CI、管道等非交互环境中，动态进度条会自动关闭，阶段日志仍会保留。也可以手动关闭动态进度条：
 
 ```bash
-python -m prmeval.cli run --config configs/eval/test_stage.yaml --no-progress
+python -m prmeval.cli run --config configs/eval/progress_test_remote.yaml --no-progress
 ```
 
 也可以单独运行各阶段：
 
 ```bash
-python -m prmeval.cli sample --config configs/eval/test_stage.yaml
-python -m prmeval.cli infer --config configs/eval/test_stage.yaml
-python -m prmeval.cli metrics --config configs/eval/test_stage.yaml
+python -m prmeval.cli sample --config configs/eval/progress_test_remote.yaml
+python -m prmeval.cli infer --config configs/eval/progress_test_remote.yaml
+python -m prmeval.cli metrics --config configs/eval/progress_test_remote.yaml
 ```
 查看已注册组件：
 
@@ -71,6 +79,7 @@ python -m prmeval.cli list-metrics
 ## 文档
 
 - [配置文件说明](docs/CONFIGURATION.md)
+- [本地优先模型接入](docs/LOCAL_MODELS.md)
 - [三阶段评测流程](docs/PIPELINE.md)
 - [全流程运行产物说明](docs/ARTIFACTS.md)
 - [EvaluationRecord 数据结构](docs/RECORD_SCHEMA.md)
@@ -83,22 +92,29 @@ python -m prmeval.cli list-metrics
 prmeval/infer/
 ├── __init__.py          # 注册加载与 create_infer() 公共入口
 ├── base.py              # HTTP、认证、重试、请求计数和图片编码
+├── model.py             # 本地优先 ProgressModel、remote context 与通用 adapter
 ├── openai.py            # Chat Completions 与 JSON Schema 校验
 ├── mock_server.py       # 本地 OpenAI-compatible contract 服务
 └── baselines/
-    ├── common.py        # progress baseline 公共辅助逻辑
+    ├── __init__.py      # built-in 模型注册
+    ├── progress_test.py # 通用 OpenAI-compatible 远程冒烟模型
     ├── gvl.py
     ├── roboreward.py
     ├── robodopamine.py
     ├── topreward.py
     ├── vlac.py
-    ├── rbm.py
-    ├── rewind.py
+    ├── rbm_model.py     # 同时注册 rbm 和 rewind
     ├── rlvlmf.py
-    └── progress_test.py
+    └── rbd_inference.py
 ```
 
-新增内置模型时，在 `baselines/` 中创建与 registry 名称一致的文件，并在 `baselines/__init__.py` 中导入，使 `@register_infer(...)` 在包加载时完成注册。不要新增本地模型加载路径或 `/v1/evaluations` 等独立传输协议。
+新增本地 progress 模型时，在 `baselines/` 中创建与 registry 名称一致的文件，使用
+`ProgressModel` 接口实现 `compute_progress()`，可选实现原生 `compute_progress_batch()` 和
+`remote_compute_progress()`，然后在 `baselines/__init__.py` 中导入并调用 `register_progress_model(...)`。
+详细接口见 [本地优先模型接入](docs/LOCAL_MODELS.md)。
+
+`progress_test` 不加载本地 checkpoint，仅用于检查通用 OpenAI-compatible 远程协议以及三个 Stage 的产物
+衔接；真实 baseline 的算法正确性仍应使用各模型自己的回归测试验证。
 
 原始数据需要先通过独立的 [`dataset_unify`](dataset_unify/) 工具转换为本地标准 Hugging Face Dataset，再交给 PRMEval 读取。数据统一的字段、配置和新增数据集方法均以该工具自己的文档为准。
 
@@ -107,5 +123,3 @@ prmeval/infer/
 本项目基于开源项目 [Robometer](https://github.com/robometer/robometer) 进行重构与扩展。
 
 感谢 Robometer 项目的作者和贡献者开源其代码。本仓库中的部分实现来源于 Robometer，并在此基础上进行了代码结构重组、重构以及功能扩展，以适配本项目的具体需求。
-
-

@@ -31,15 +31,20 @@ class SamplingConfig(BaseModel):
 
 
 class InferConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str
-    transport: Literal["openai_chat"] | None = None
-    base_url: str
+    mode: Literal["local", "remote"] | None = None
+    transport: Literal["openai_chat", "local_huggingface"] | None = None
+    base_url: str | None = None
     api_key: str | None = None
-    model_id: str
+    model_id: str | None = None
+    model_path: str | None = None
     model_version: str | None = None
     timeout_seconds: float = Field(default=120.0, gt=0)
     max_retries: int = Field(default=5, ge=0)
     max_concurrency: int = Field(default=4, ge=1)
+    batch_size: int = Field(default=1, ge=1)
     temperature: float = 0.0
     max_tokens: int = 1024
     headers: dict[str, str] = Field(default_factory=dict)
@@ -51,7 +56,13 @@ class InferConfig(BaseModel):
         if not isinstance(data, dict):
             return data
         resolved = dict(data)
-        for field in ("base_url", "api_key", "model_id"):
+        mode = resolved.get("mode")
+        if mode is None:
+            mode = "remote" if resolved.get("base_url") or resolved.get("transport") == "openai_chat" else "local"
+            resolved["mode"] = mode
+        if "max_concurrency" not in resolved and mode == "local":
+            resolved["max_concurrency"] = 1
+        for field in ("base_url", "api_key", "model_id", "model_path"):
             value = resolved.get(field)
             if not value:
                 continue
@@ -60,6 +71,27 @@ class InferConfig(BaseModel):
             elif value.isidentifier() and value.isupper():
                 raise ValueError(f"Environment variable {value!r} configured by infer.{field} is missing")
         return resolved
+
+    @model_validator(mode="after")
+    def validate_mode_fields(self):
+        if self.mode == "local":
+            if not self.model_path:
+                raise ValueError("Local inference requires infer.model_path")
+            if self.transport not in (None, "local_huggingface"):
+                raise ValueError("Local inference uses transport 'local_huggingface'")
+            if self.max_concurrency != 1:
+                raise ValueError("Local inference requires infer.max_concurrency=1")
+            self.transport = "local_huggingface"
+            self.model_id = self.model_id or self.model_path
+        else:
+            if not self.base_url:
+                raise ValueError("Remote inference requires infer.base_url")
+            if not self.model_id:
+                raise ValueError("Remote inference requires infer.model_id")
+            if self.transport not in (None, "openai_chat"):
+                raise ValueError("Remote inference uses transport 'openai_chat'")
+            self.transport = "openai_chat"
+        return self
 
 
 class EvalConfig(BaseModel):

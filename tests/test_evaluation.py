@@ -27,7 +27,7 @@ from prmeval.core.schemas import (
     Trajectory,
 )
 from prmeval.infer import create_infer
-from prmeval.infer.base import RemoteError
+from prmeval.infer.base import RemoteError, parse_json_content
 from prmeval.infer.openai import OpenAIChatInfer, progress_schema
 from prmeval.metrics.builtins import compute_metrics
 from prmeval.sample.prepare import _uniform_indices, _video_frames
@@ -100,6 +100,57 @@ class _BodyResponse:
 
 
 class FrameworkTest(unittest.TestCase):
+    def test_remote_json_parser_recovers_known_compatible_server_wrappers(self):
+        expected = {"progress": [0.0, 0.5, 1.0]}
+        variants = [
+            '```json\n{"progress": [0.0, 0.5, 1.0]}\n```',
+            '{{"progress": [0.0, 0.5, 1.0]}\n}',
+            '{"{"progress": [0.0, 0.5, 1.0]}',
+        ]
+        for content in variants:
+            with self.subTest(content=content):
+                self.assertEqual(parse_json_content(content), expected)
+
+    def test_remote_json_parser_does_not_accept_incomplete_json(self):
+        with self.assertRaisesRegex(RemoteError, "valid JSON"):
+            parse_json_content('{"progress": [0.0, 0.5')
+
+    @patch("prmeval.infer.base.httpx.post")
+    def test_openai_chat_falls_back_from_null_parsed_to_content(self, post):
+        post.return_value = _BodyResponse({
+            "choices": [{
+                "message": {
+                    "parsed": None,
+                    "content": '{"progress": [0.0, 0.5, 1.0]}',
+                }
+            }]
+        })
+        infer = OpenAIChatInfer(InferConfig(
+            name="remote",
+            base_url="https://example.com/v1",
+            model_id="model",
+            max_retries=0,
+        ))
+        prediction = infer.predict(_make_progress_sample())
+        self.assertEqual(prediction.progress, [0.0, 0.5, 1.0])
+
+    @patch("prmeval.infer.base.httpx.post")
+    def test_schema_parse_error_retains_backend_response(self, post):
+        response = {
+            "id": "failed-completion",
+            "choices": [{"message": {"content": '{"progress": [0.0'}}],
+        }
+        post.return_value = _BodyResponse(response)
+        infer = OpenAIChatInfer(InferConfig(
+            name="remote",
+            base_url="https://example.com/v1",
+            model_id="model",
+            max_retries=0,
+        ))
+        with self.assertRaises(RemoteError) as raised:
+            infer.predict(_make_progress_sample())
+        self.assertEqual(raised.exception.raw_response, response)
+
     def test_stage_commands_accept_no_progress(self):
         parser = build_parser()
         for command in ("run", "sample", "infer", "metrics"):
@@ -438,7 +489,8 @@ infer:
                 predictions.append(infer.predict(sample).progress)
 
         order = list(range(3))
-        random.Random(int(hashlib.sha256(sample.sample_id.encode()).hexdigest()[:16], 16)).shuffle(order)
+        seed_input = f"{sample.trajectory.task}|{len(sample.trajectory.frames)}"
+        random.Random(int(hashlib.sha256(seed_input.encode()).hexdigest()[:16], 16)).shuffle(order)
         expected = [0.0] * 3
         for presented, original in enumerate(order):
             expected[original] = [0.1, 0.5, 0.9][presented]
@@ -762,6 +814,35 @@ infer:
                 recovered = Evaluator(config).run()
             self.assertEqual(recovered["coverage"]["successful"], 1)
             self.assertEqual(recovered["coverage"]["failed"], 0)
+
+    def test_failed_schema_response_is_written_to_errors_artifact(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = EvalConfig(
+                sampling=SamplingConfig(
+                    dataset_name="rbm-1m-ood-micro", adapter="jsonl", paths=[str(GOLDEN_FIXTURE)],
+                    eval_types=["reward_alignment"], max_frames=3,
+                ),
+                infer=InferConfig(
+                    name="progress_test", base_url="http://service", model_id="mock", max_retries=0,
+                ),
+                output_dir=tmp,
+                run_name="raw-error-response",
+            )
+            evaluator = Evaluator(config)
+            evaluator.sample()
+            response = {
+                "id": "failed-completion",
+                "choices": [{"message": {"content": '{"progress": [0.0'}}],
+            }
+            with patch("httpx.post", return_value=_BodyResponse(response)):
+                summary = evaluator.infer()
+
+            self.assertEqual(summary["coverage"]["failed"], 1)
+            error_record = EvaluationRecord.model_validate_json(
+                evaluator.errors_path.read_text(encoding="utf-8").strip()
+            )
+            self.assertEqual(error_record.execution.raw_response, response)
+            self.assertIn("Could not parse", error_record.execution.error)
 
 
 if __name__ == "__main__":

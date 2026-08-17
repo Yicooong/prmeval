@@ -48,7 +48,7 @@ evaluation_output/<run_name>/
 终端中的进度条和日志不是运行产物：它们写入 stderr。CLI 返回的最终 JSON 摘要写入 stdout，只有显式重定向时才会保存，例如：
 
 ```bash
-python -m prmeval.cli run --config configs/eval/test_stage.yaml > summary.json
+python -m prmeval.cli run --config configs/eval/progress_test_remote.yaml > summary.json
 ```
 
 ## Stage 1 产物
@@ -159,17 +159,17 @@ Preference 类样本通常包含 `chosen` 和 `rejected` 两个 item，各自拥
 }
 ```
 
-推理通过线程池并发执行，因此记录写入顺序不保证与 `samples.jsonl` 一致。跨阶段关联应使用 `sample_id`，不能依赖行号。
+推理先按 `infer.batch_size` 分组，再通过最多 `infer.max_concurrency` 个线程执行 batch，因此记录写入顺序不保证与 `samples.jsonl` 一致。跨阶段关联应使用 `sample_id`，不能依赖行号。local 模式使用单线程 batch，remote 模式通常使用单样本多线程请求。
 
 ### `errors.jsonl`
 
-保存推理失败的完整 `EvaluationRecord`。失败记录的 `execution.status` 为 `error`，并包含异常类型、错误消息、请求次数和耗时；`prediction` 为 `null`。
+保存推理失败的完整 `EvaluationRecord`。失败记录的 `execution.status` 为 `error`，并包含异常类型、错误消息、请求次数和耗时；`prediction` 为 `null`。如果远程服务已经返回结果、但响应解析或 schema 校验失败，完整服务响应会保存在 `execution.raw_response`；连接阶段失败、没有响应时该字段为 `null`。
 
 在 `resume: true` 下，失败样本会在下次运行中重试。历史错误行不会被删除，因此同一个 `sample_id` 可能出现多次；一旦该样本成功，其成功记录会写入 `predictions.jsonl`，并且不再计入当前未解决失败数。审计历史失败时读取 `errors.jsonl`，判断当前状态时以 `predictions.jsonl` 和 `inference_summary.json` 为准。
 
 ### `inference_summary.json`
 
-保存 Stage 2 的覆盖率和输入输出定位：
+保存 Stage 2 的覆盖率、实际执行模式和输入输出定位：
 
 ```json
 {
@@ -178,6 +178,11 @@ Preference 类样本通常包含 `chosen` 和 `rejected` 两个 item，各自拥
     "failed": 1,
     "new": 3,
     "skipped": 7
+  },
+  "execution": {
+    "mode": "local",
+    "batch_size": 4,
+    "max_concurrency": 1
   },
   "fingerprint": "<full-config-sha256>",
   "samples": "evaluation_output/example/samples.jsonl",
@@ -262,16 +267,16 @@ Stage 3 完成后还会更新 `run_manifest.json`：将状态设为 `completed`�
 
 ```bash
 python -m prmeval.cli sample \
-  --config configs/eval/test_stage.yaml \
+  --config configs/eval/progress_test_remote.yaml \
   --output /tmp/my_samples.jsonl
 
 python -m prmeval.cli infer \
-  --config configs/eval/test_stage.yaml \
+  --config configs/eval/progress_test_remote.yaml \
   --samples /tmp/my_samples.jsonl \
   --output /tmp/my_predictions.jsonl
 
 python -m prmeval.cli metrics \
-  --config configs/eval/test_stage.yaml \
+  --config configs/eval/progress_test_remote.yaml \
   --predictions /tmp/my_predictions.jsonl
 ```
 

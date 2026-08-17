@@ -133,11 +133,20 @@ class OpenAIChatInfer(RemoteInfer):
             "response_format": {"type": "json_schema", "json_schema": schema},
         }
         last_error = None
+        last_response = None
         for parse_attempt in range(self.config.max_retries + 1):
             response = self._completion(messages, options)
+            last_response = response
             try:
                 message = response["choices"][0]["message"]
-                content = message.get("parsed", message.get("content"))
+                content = next(
+                    (
+                        message.get(field)
+                        for field in ("parsed", "content", "reasoning_content")
+                        if message.get(field) is not None
+                    ),
+                    None,
+                )
                 parsed = parse_json_content(content)
                 _validate_structured_output(parsed, schema["schema"])
                 if validator:
@@ -154,7 +163,10 @@ class OpenAIChatInfer(RemoteInfer):
                     },
                     *messages,
                 ]
-        raise RemoteError(f"Could not parse a schema-conforming response: {last_error}")
+        raise RemoteError(
+            f"Could not parse a schema-conforming response: {last_error}",
+            raw_response=last_response,
+        )
 
     def predict(self, sample: EvaluationSample):
         if isinstance(sample, ProgressSample):

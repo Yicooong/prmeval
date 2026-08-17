@@ -1,4 +1,4 @@
-"""PRMEval remote evaluation framework."""
+"""PRMEval local and remote evaluation framework."""
 
 from .core.config import EvalConfig
 from .core.schemas import (

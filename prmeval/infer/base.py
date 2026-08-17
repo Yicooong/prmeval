@@ -4,6 +4,7 @@ import base64
 import io
 import json
 import random
+import re
 import threading
 import time
 from abc import ABC, abstractmethod
@@ -18,7 +19,11 @@ from ..core.schemas import EvaluationSample, Prediction
 
 
 class RemoteError(RuntimeError):
-    pass
+    """Remote inference failure with an optional backend response for diagnostics."""
+
+    def __init__(self, message: str, *, raw_response: Any = None):
+        super().__init__(message)
+        self.raw_response = raw_response
 
 
 def image_data_url(frame: Any, quality: int = 85) -> str:
@@ -51,12 +56,51 @@ def vision_content(frames: Any, prefix: str = "Frame") -> list[dict[str, Any]]:
     ]
 
 
-class RemoteInfer(ABC):
+class Infer(ABC):
     capabilities: ClassVar[set[str]] = set()
+    supported_modes: ClassVar[set[str]] = {"local", "remote"}
+    thread_safe: bool = True
+    supports_batch: bool = False
     transport: str
 
     def __init__(self, config: InferConfig):
         self.config = config
+
+    @classmethod
+    def supports_batch_mode(cls, mode: str) -> bool:
+        return cls.supports_batch
+
+    @classmethod
+    def thread_safe_mode(cls, mode: str) -> bool:
+        return cls.thread_safe
+
+    def begin_prediction(self) -> None:
+        pass
+
+    def attempts(self) -> int:
+        return 1
+
+    @abstractmethod
+    def predict(self, sample: EvaluationSample) -> Prediction:
+        raise NotImplementedError
+
+    def predict_batch(self, samples: list[EvaluationSample]) -> list[Prediction]:
+        return [self.predict(sample) for sample in samples]
+
+    def model_info(self) -> dict[str, Any]:
+        return {
+            "model": self.config.model_id,
+            "model_version": self.config.model_version,
+            "mode": self.config.mode,
+            "transport": self.transport,
+        }
+
+
+class RemoteInfer(Infer):
+    supported_modes: ClassVar[set[str]] = {"remote"}
+
+    def __init__(self, config: InferConfig):
+        super().__init__(config)
         self._local = threading.local()
 
     def begin_prediction(self) -> None:
@@ -98,18 +142,15 @@ class RemoteInfer(ABC):
                     break
                 delay = min(30.0, (2**attempt) + random.random())
                 time.sleep(delay)
-        raise RemoteError(f"Remote request failed after {self.config.max_retries + 1} attempts: {last_error}")
-
-    @abstractmethod
-    def predict(self, sample: EvaluationSample) -> Prediction:
-        raise NotImplementedError
+        raise RemoteError(
+            f"Remote request failed after {self.config.max_retries + 1} attempts: {last_error}",
+            raw_response=getattr(last_error, "raw_response", None),
+        )
 
     def model_info(self) -> dict[str, Any]:
         return {
-            "model": self.config.model_id,
-            "model_version": self.config.model_version,
+            **super().model_info(),
             "base_url": self.config.base_url,
-            "transport": self.transport,
         }
 
 
@@ -118,7 +159,36 @@ def parse_json_content(content: Any) -> dict[str, Any]:
         return content
     if not isinstance(content, str):
         raise RemoteError(f"Expected string or object response content, got {type(content)!r}")
+
+    text = content.strip()
     try:
-        return json.loads(content)
-    except json.JSONDecodeError as exc:
-        raise RemoteError(f"Response did not contain valid JSON: {content[:300]}") from exc
+        value = json.loads(text)
+        if not isinstance(value, dict):
+            raise RemoteError(f"Expected a JSON object response, got {type(value)!r}")
+        return value
+    except json.JSONDecodeError as strict_error:
+        # A few OpenAI-compatible servers occasionally wrap otherwise valid
+        # structured output in a Markdown fence or emit one duplicated opening
+        # brace. Recover only a complete JSON object; schema validation still
+        # runs in OpenAIChatInfer._chat after this function returns.
+        fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", text, flags=re.IGNORECASE | re.DOTALL)
+        if fenced:
+            text = fenced.group(1).strip()
+
+        candidates = [text]
+        malformed_prefix = re.match(r'^\{\s*"\s*\{(?=")', text)
+        if malformed_prefix:
+            candidates.append("{" + text[malformed_prefix.end() :])
+
+        decoder = json.JSONDecoder()
+        for candidate in candidates:
+            for start, character in enumerate(candidate):
+                if character != "{":
+                    continue
+                try:
+                    value, end = decoder.raw_decode(candidate, start)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(value, dict) and not candidate[end:].strip().strip("}"):
+                    return value
+        raise RemoteError(f"Response did not contain valid JSON: {content[:300]}") from strict_error

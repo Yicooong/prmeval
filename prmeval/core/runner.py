@@ -141,6 +141,7 @@ class Evaluator:
         source: EvaluationRecord,
         prediction=None,
         error: str | None = None,
+        error_response=None,
         latency: float | None = None,
         attempts: int = 1,
     ) -> EvaluationRecord:
@@ -176,31 +177,95 @@ class Evaluator:
             "execution": {
                 "status": "error" if error else "success",
                 "error": error,
+                "raw_response": error_response,
                 "attempts": attempts,
                 "latency_seconds": latency,
             },
         })
         return EvaluationRecord.model_validate(payload)
 
-    def _predict(self, infer, source: EvaluationRecord, bundle_dir: Path):
+    @staticmethod
+    def _validate_prediction(sample, prediction) -> None:
+        if prediction.sample_id != sample.sample_id:
+            raise ValueError(
+                f"Prediction sample_id mismatch: expected {sample.sample_id}, got {prediction.sample_id}"
+            )
+        if isinstance(prediction, ProgressPrediction):
+            expected = len(sample.trajectory.frames)
+            actual = len(prediction.progress)
+            if actual != expected:
+                raise ValueError(f"Progress length mismatch: expected {expected}, got {actual}")
+
+    def _predict_batch(
+        self,
+        infer,
+        sources: list[EvaluationRecord],
+        bundle_dir: Path,
+    ) -> list[EvaluationRecord]:
         started = time.monotonic()
         infer.begin_prediction()
+        samples = []
+        valid_sources = []
+        records = []
+
+        for source in sources:
+            try:
+                samples.append(record_to_sample(source, bundle_dir))
+                valid_sources.append(source)
+            except Exception as exc:
+                records.append(self._record_for(
+                    source,
+                    error=f"{type(exc).__name__}: {exc}",
+                    latency=time.monotonic() - started,
+                    attempts=1,
+                ))
+
+        if not samples:
+            return records
+
         try:
-            sample = record_to_sample(source, bundle_dir)
-            prediction = infer.predict(sample)
-            if isinstance(prediction, ProgressPrediction):
-                expected = len(sample.trajectory.frames)
-                actual = len(prediction.progress)
-                if actual != expected:
-                    raise ValueError(f"Progress length mismatch: expected {expected}, got {actual}")
-            return self._record_for(
-                source, prediction=prediction, latency=time.monotonic() - started, attempts=infer.attempts()
-            )
+            predictions = infer.predict_batch(samples)
+            if len(predictions) != len(samples):
+                raise ValueError(
+                    f"Batch prediction count mismatch: expected {len(samples)}, got {len(predictions)}"
+                )
         except Exception as exc:
-            return self._record_for(
-                source, error=f"{type(exc).__name__}: {exc}", latency=time.monotonic() - started,
-                attempts=max(1, infer.attempts()),
+            latency = time.monotonic() - started
+            attempts = max(1, infer.attempts())
+            records.extend(
+                self._record_for(
+                    source,
+                    error=f"{type(exc).__name__}: {exc}",
+                    error_response=getattr(exc, "raw_response", None),
+                    latency=latency,
+                    attempts=attempts,
+                )
+                for source in valid_sources
             )
+            return records
+
+        latency = time.monotonic() - started
+        attempts = max(1, infer.attempts())
+        for source, sample, prediction in zip(valid_sources, samples, predictions, strict=True):
+            try:
+                self._validate_prediction(sample, prediction)
+                records.append(self._record_for(
+                    source,
+                    prediction=prediction,
+                    latency=latency,
+                    attempts=attempts,
+                ))
+            except Exception as exc:
+                records.append(self._record_for(
+                    source,
+                    error=f"{type(exc).__name__}: {exc}",
+                    latency=latency,
+                    attempts=attempts,
+                ))
+        return records
+
+    def _predict(self, infer, source: EvaluationRecord, bundle_dir: Path):
+        return self._predict_batch(infer, [source], bundle_dir)[0]
 
     def _samples(self, trajectories) -> Iterable:
         for eval_type in self.config.sampling.eval_types:
@@ -318,29 +383,35 @@ class Evaluator:
             len(records_to_run),
             len(completed),
         )
+        batch_size = self.config.infer.batch_size
+        batches = [
+            records_to_run[start : start + batch_size]
+            for start in range(0, len(records_to_run), batch_size)
+        ]
         new_records: list[EvaluationRecord] = []
         with ThreadPoolExecutor(max_workers=self.config.infer.max_concurrency) as executor:
             future_map = {
-                executor.submit(self._predict, infer, record, source.parent): record
-                for record in records_to_run
+                executor.submit(self._predict_batch, infer, batch, source.parent): batch
+                for batch in batches
             }
             futures = self._progress(
                 as_completed(future_map),
                 description=f"Stage 2/3 Infer (skipped={len(completed)})",
-                unit="sample",
-                total=len(records_to_run),
+                unit="batch",
+                total=len(batches),
             )
             for future in futures:
-                record = future.result()
-                new_records.append(record)
-                target = (
-                    self.errors_path
-                    if record.execution and record.execution.status == "error"
-                    else self.predictions_path
-                )
-                with target.open("a", encoding="utf-8") as handle:
-                    handle.write(json.dumps(jsonable(record), ensure_ascii=False) + "\n")
-                    handle.flush()
+                batch_records = future.result()
+                for record in batch_records:
+                    new_records.append(record)
+                    target = (
+                        self.errors_path
+                        if record.execution and record.execution.status == "error"
+                        else self.predictions_path
+                    )
+                    with target.open("a", encoding="utf-8") as handle:
+                        handle.write(json.dumps(jsonable(record), ensure_ascii=False) + "\n")
+                        handle.flush()
         records = [EvaluationRecord.model_validate(row) for row in _read_jsonl(self.predictions_path)]
         successful_ids = {record.sample_id for record in records}
         unresolved_errors = {
@@ -356,6 +427,11 @@ class Evaluator:
             "fingerprint": self.fingerprint,
             "samples": str(source),
             "predictions": str(self.predictions_path),
+            "execution": {
+                "mode": self.config.infer.mode,
+                "batch_size": batch_size,
+                "max_concurrency": self.config.infer.max_concurrency,
+            },
         }
         self.inference_summary_path.write_text(
             json.dumps(jsonable(summary), indent=2, ensure_ascii=False), encoding="utf-8"
@@ -397,14 +473,18 @@ class Evaluator:
         if self.inference_summary_path.exists() and source == self.predictions_path:
             inference = json.loads(self.inference_summary_path.read_text(encoding="utf-8"))
             coverage = inference["coverage"]
+            execution = inference.get("execution")
         else:
             coverage = {"successful": len(records), "failed": 0, "new": 0, "skipped": 0}
+            execution = None
         summary = {
             "metrics": metrics,
             "coverage": coverage,
             "fingerprint": self.fingerprint,
             "predictions": str(source),
         }
+        if execution:
+            summary["execution"] = execution
         self.output_dir.mkdir(parents=True, exist_ok=True)
         (self.output_dir / "all_metrics.json").write_text(
             json.dumps(jsonable(summary), indent=2, ensure_ascii=False), encoding="utf-8"

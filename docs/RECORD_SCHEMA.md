@@ -31,7 +31,7 @@
 | 评测路由 | `evaluation` | 指定 eval type 和数据集切片 |
 | 模型输入 | `input` | 保存任务、帧引用和抽样信息 |
 | 指标真值 | `target` | 保存 progress、rank、preference 等真值 |
-| 模型身份 | `infer` | 保存 infer、远程模型和版本 |
+| 模型身份 | `infer` | 保存 infer、本地 checkpoint 或远程模型身份和版本 |
 | 模型输出 | `prediction` | 保存 adapter 归一化后的预测 |
 | 执行审计 | `execution` | 保存成功/失败、重试次数和耗时 |
 | 来源审计 | `source` | 保存可选的原始数据 ID |
@@ -160,10 +160,14 @@ len(target.values) == len(prediction.values)
     "status": "success",
     "attempts": 1,
     "latency_seconds": 0.83,
-    "error": null
+    "error": null,
+    "raw_response": null
   }
 }
 ```
+
+失败记录会在 `execution.raw_response` 中保留远程服务返回的原始响应，便于定位请求成功但结构化解析或
+schema 校验失败的问题；没有收到响应（例如连接失败）时该字段为 `null`。
 
 新增 infer 只需要 adapter 填写上述字段并产生统一 `prediction`，不修改 Record 顶层结构。
 

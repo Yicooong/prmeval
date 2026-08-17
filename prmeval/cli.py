@@ -16,7 +16,7 @@ from .sample.adapters import create_dataset
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="prmeval-eval", description="Remote-first robot reward evaluation")
+    parser = argparse.ArgumentParser(prog="prmeval-eval", description="Local and remote robot reward evaluation")
     sub = parser.add_subparsers(dest="command", required=True)
     run = sub.add_parser("run", help="Run an evaluation")
     run.add_argument("--config", required=True)

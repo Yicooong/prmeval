@@ -66,12 +66,12 @@ NPZ 帧数量 = frame_indices 数量 = target.progress 数量
 运行并验证 Stage 1：
 
 ```bash
-python -m prmeval.cli sample --config configs/eval/test_stage.yaml
+python -m prmeval.cli sample --config configs/eval/progress_test_remote.yaml
 python -m prmeval.cli validate-samples \
   --samples evaluation_output/jsonl-progress-full-smoke/samples.jsonl
 ```
 
-## Stage 2：远程推理
+## Stage 2：本地或远程推理
 
 Stage 2 只接收 `EvaluationRecord(stage="sampled")`。它加载 NPZ 帧，调用 infer adapter，并在原记录上补充：
 
@@ -82,21 +82,26 @@ execution
 stage = inferred
 ```
 
-远程请求只使用 `input.task`、`input.items[].frames` 和 infer adapter 的 prompt/请求参数，`target` 不会发送给模型。`sample_id`、`evaluation`、`input` 和 `target` 在推理过程中不得改变。
+模型只使用 `input.task`、`input.items[].frames` 和 input metadata；`target` 不会传入本地模型或发送给远程服务。`sample_id`、`evaluation`、`input` 和 `target` 在推理过程中不得改变。
 
-运行器通过 `prmeval.infer.create_infer()` 从 registry 构造模型。内置实现按模型拆分在
-`prmeval/infer/baselines/<name>.py`，网络请求统一复用 `infer/base.py` 和 `infer/openai.py`：
+运行器通过 `prmeval.infer.create_infer()` 从 registry 构造模型。实现按模型拆分在
+`prmeval/infer/baselines/<name>.py`；local-first 模型通过 `infer/model.py` 接入，远程网络请求复用
+`infer/base.py` 和 `infer/openai.py`：
 
 ```text
 Evaluator.infer()
     -> prmeval.infer.create_infer(config)
-    -> baselines/<name>.py::predict(sample)
-    -> OpenAI-compatible POST /v1/chat/completions
+    -> records 按 infer.batch_size 分组
+    -> infer.predict_batch(samples)
+    -> local: model.compute_progress_batch(...)
+       remote: model.remote_compute_progress(...) 或旧 remote adapter
     -> ProgressPrediction / PreferencePrediction
     -> EvaluationRecord(stage="inferred")
 ```
 
-目前没有本地模型加载或其他远程 transport；配置中的 `infer.transport` 只能是 `openai_chat`。
+Runner 的一个线程池任务处理一个 batch。local 使用 `batch_size=N, max_concurrency=1`，通过一次模型调用提高
+GPU 利用率；remote 通常使用 `batch_size=1, max_concurrency=N`，通过多线程隐藏网络等待。Runner 不理解
+模型内部的 trajectory prefix、prompt、processor 或 logits 逻辑。
 
 标准化后的结果示例：
 
@@ -111,6 +116,10 @@ Evaluator.infer()
 成功结果写入 `predictions.jsonl`，失败结果写入 `errors.jsonl`。progress 输出数量与输入帧数不一致时，该样本会被记录为失败。
 
 ### Infer 协议
+
+local-first progress 模型实现 `compute_progress()`；原生 batch 模型再实现 `compute_progress_batch()`；需要远程
+能力时可在同一个模型类中增加 `remote_compute_progress()`。框架只在 adapter 入口分发一次 local/remote，
+模型的共享 prompt、解析和归一化逻辑无需复制。接口和注册示例见 [本地优先模型接入](LOCAL_MODELS.md)。
 
 `progress_test` 用于联调通用 OpenAI-compatible 模型，只支持 progress 样本。它调用 `POST /v1/chat/completions`，以 Base64 多图片 `image_url` 发送帧，并通过 JSON Schema 约束返回等长的 progress 数组：
 
@@ -137,7 +146,7 @@ python -m prmeval.cli list-infers
 运行并验证 Stage 2：
 
 ```bash
-python -m prmeval.cli infer --config configs/eval/test_stage.yaml
+python -m prmeval.cli infer --config configs/eval/progress_test_remote.yaml
 python -m prmeval.cli validate-predictions \
   --predictions evaluation_output/jsonl-progress-full-smoke/predictions.jsonl
 ```
@@ -169,7 +178,7 @@ Policy ranking 使用 `target(kind=rank).value`、`prediction(kind=progress).val
 运行 Stage 3：
 
 ```bash
-python -m prmeval.cli metrics --config configs/eval/test_stage.yaml
+python -m prmeval.cli metrics --config configs/eval/progress_test_remote.yaml
 ```
 
 也可以不调用模型，直接从已有预测重新计算指标：
@@ -231,7 +240,7 @@ evaluation_output/<run_name>/
 连续运行三个阶段：
 
 ```bash
-python -m prmeval.cli run --config configs/eval/test_stage.yaml
+python -m prmeval.cli run --config configs/eval/progress_test_remote.yaml
 ```
 
 CLI 默认向 stderr 输出阶段日志，并在交互式终端中展示各阶段进度：Stage 1 统计读取轨迹、生成样本和写入样本，Stage 2 统计已完成的推理样本，Stage 3 统计已计算的指标。断点续跑时，Stage 2 会同时报告待处理和已跳过的样本数。使用 `--no-progress` 可以关闭动态进度条；普通阶段日志不受影响。非交互式 stderr（例如 CI 或输出重定向）会自动禁用动态条，避免产生重复控制字符。
@@ -239,7 +248,7 @@ CLI 默认向 stderr 输出阶段日志，并在交互式终端中展示各阶�
 进度和日志使用 stderr，最终 JSON 摘要使用 stdout。例如下面的命令只将摘要写入文件：
 
 ```bash
-python -m prmeval.cli run --config configs/eval/test_stage.yaml > summary.json
+python -m prmeval.cli run --config configs/eval/progress_test_remote.yaml > summary.json
 ```
 
 也可以通过 Python API 调用：
@@ -247,7 +256,7 @@ python -m prmeval.cli run --config configs/eval/test_stage.yaml > summary.json
 ```python
 from prmeval import EvalConfig, Evaluator
 
-config = EvalConfig.from_yaml("configs/eval/test_stage.yaml")
+config = EvalConfig.from_yaml("configs/eval/progress_test_remote.yaml")
 evaluator = Evaluator(config)
 
 sample_summary = evaluator.sample()

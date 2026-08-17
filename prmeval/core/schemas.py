@@ -118,7 +118,7 @@ class ValuePayload(FrameworkModel):
 
 class InferIdentity(FrameworkModel):
     name: str = Field(description="Registered infer name in the evaluation framework")
-    model: str = Field(description="Model name used by the remote service")
+    model: str = Field(description="Local checkpoint or remote model identity used for inference")
     version: str | None = Field(default=None, description="Optional model or deployment version")
 
 
@@ -127,6 +127,7 @@ class ExecutionInfo(FrameworkModel):
     attempts: int = Field(default=1, ge=1, description="Number of requests including retries")
     latency_seconds: float | None = Field(default=None, ge=0, description="Total inference latency")
     error: str | None = Field(default=None, description="Error summary when inference fails")
+    raw_response: Any = Field(default=None, description="Unparsed backend response retained when inference fails")
 
 
 class SourceInfo(FrameworkModel):
