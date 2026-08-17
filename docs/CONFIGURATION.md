@@ -69,8 +69,8 @@ resume: false
 
 | 字段 | 说明 |
 |---|---|
-| `name` | 已注册的 infer 名称 |
-| `transport` | 远程传输协议，例如 `openai_chat` |
+| `name` | 已注册的 infer 名称；对应 `prmeval/infer/baselines/<name>.py` |
+| `transport` | 远程传输协议，目前仅支持 `openai_chat` |
 | `base_url` | 服务地址或保存服务地址的环境变量名 |
 | `api_key` | API Key 或保存 Key 的环境变量名；服务无需认证时可省略 |
 | `model_id` | 模型 ID 或保存模型 ID 的环境变量名 |
@@ -83,8 +83,11 @@ resume: false
 
 内置的 `gvl`、`roboreward`、`robodopamine`、`topreward`、`vlac`、`rbm`、`rewind` 以及 `rlvlmf`
 均使用 `transport: openai_chat` 和 `POST /v1/chat/completions`。PRMEval 只负责组织提示、图片和结果归一化，
-不会在本地加载模型或 checkpoint。旧的 `specialized` transport 仍可供自定义代码使用，但不能配置给上述
-七个内置 progress infer。
+不会在本地加载模型或 checkpoint。`infer.transport` 目前只支持 `openai_chat`。
+
+`prmeval.infer.create_infer()` 是统一的模型构造入口。导入 `prmeval.infer` 时会加载
+`prmeval/infer/baselines/__init__.py`，从而完成各模型的 registry 注册；项目不再提供
+`prmeval.infer.adapters` 或 `specialized` transport。
 
 各 progress infer 的远程调用行为如下：
 

@@ -8,7 +8,7 @@ import threading
 import time
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import httpx
 import numpy as np
@@ -52,7 +52,7 @@ def vision_content(frames: Any, prefix: str = "Frame") -> list[dict[str, Any]]:
 
 
 class RemoteInfer(ABC):
-    capabilities: set[str] = set()
+    capabilities: ClassVar[set[str]] = set()
     transport: str
 
     def __init__(self, config: InferConfig):

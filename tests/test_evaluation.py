@@ -26,10 +26,9 @@ from prmeval.core.schemas import (
     ProgressSample,
     Trajectory,
 )
-from prmeval.infer.adapters import create_infer
+from prmeval.infer import create_infer
 from prmeval.infer.base import RemoteError
-from prmeval.infer.openai import PROGRESS_SCHEMA, OpenAIChatInfer
-from prmeval.infer.specialized import SpecializedInfer, SpecializedRequest, SpecializedResponse
+from prmeval.infer.openai import OpenAIChatInfer, progress_schema
 from prmeval.metrics.builtins import compute_metrics
 from prmeval.sample.prepare import _uniform_indices, _video_frames
 from prmeval.sample.progress import compute_progress
@@ -277,54 +276,6 @@ infer:
         self.assertEqual(len(confusion), 4)
         self.assertEqual({s.trajectory.metadata["lang_task"] for s in confusion}, {"task-a", "task-b"})
 
-    def test_specialized_contract(self):
-        request = SpecializedRequest(
-            model="rbm",
-            request_id="sample",
-            prediction_type="progress",
-            task="task",
-            trajectories=[{"id": "t", "frames": []}],
-        )
-        self.assertEqual(request.prediction_type, "progress")
-        response = SpecializedResponse.model_validate({
-            "id": "r",
-            "model": "rbm",
-            "model_version": "v1",
-            "predictions": [{"trajectory_id": "t", "progress": [0.0, 1.0]}],
-        })
-        self.assertEqual(response.predictions[0].progress, [0.0, 1.0])
-        with self.assertRaises(ValueError):
-            SpecializedResponse.model_validate({
-                "id": "r", "model": "rbm", "predictions": [{"progress": [-0.1, 1.0]}]
-            })
-
-    def test_specialized_adapter_contract(self):
-        infer = SpecializedInfer(InferConfig(
-            name="rbm", base_url="http://service/v1", model_id="rbm-model", max_retries=0
-        ))
-        sample = ProgressSample(
-            sample_id="sample-id", eval_type="reward_alignment",
-            trajectory=Trajectory(
-                id="trajectory", task="task", frames=[PIXEL, PIXEL], data_source="fixture",
-                target_progress=[0.0, 1.0],
-            ),
-        )
-        captured = {}
-
-        def mock_post(url, **kwargs):
-            captured.update(url=url, payload=kwargs["json"])
-            return _BodyResponse({
-                "id": "sample-id", "model": "rbm-model", "model_version": "v1",
-                "predictions": [{"trajectory_id": "trajectory", "progress": [0.0, 1.0]}],
-            })
-
-        with patch("httpx.post", side_effect=mock_post):
-            prediction = infer.predict(sample)
-        self.assertEqual(captured["url"], "http://service/v1/evaluations")
-        self.assertEqual(captured["payload"]["prediction_type"], "progress")
-        self.assertEqual(len(captured["payload"]["trajectories"][0]["frames"]), 2)
-        self.assertEqual(prediction.progress, [0.0, 1.0])
-
     def test_metric_goldens(self):
         progress_records = [
             EvaluationRecord(
@@ -416,7 +367,7 @@ infer:
             return responses.pop(0)
 
         with patch("httpx.post", side_effect=mock_post):
-            parsed, _ = infer._chat([{"role": "user", "content": "prompt"}], PROGRESS_SCHEMA)
+            parsed, _ = infer._chat([{"role": "user", "content": "prompt"}], progress_schema(1))
         self.assertEqual(parsed, {"progress": [0.5]})
         self.assertEqual(urls, ["http://service/v1/chat/completions"] * 2)
 
@@ -462,10 +413,8 @@ infer:
             ))
             self.assertEqual(infer.transport, "openai_chat")
             self.assertEqual(infer.capabilities, {"progress"})
-        with self.assertRaisesRegex(ValueError, "openai_chat"):
-            create_infer(InferConfig(
-                name="rbm", transport="specialized", base_url="http://service/v1", model_id="model"
-            ))
+        with self.assertRaises(ValueError):
+            InferConfig(name="rbm", transport="specialized", base_url="http://service/v1", model_id="model")
 
     def test_gvl_deterministic_shuffle_and_percentage_mapping(self):
         sample = _make_progress_sample(sample_id="stable-gvl-sample")

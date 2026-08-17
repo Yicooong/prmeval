@@ -14,7 +14,7 @@ from typing import TypeVar
 
 from tqdm import tqdm
 
-from ..infer.adapters import create_infer
+from ..infer import create_infer
 from ..metrics.builtins import compute_metrics
 from ..sample.adapters import create_dataset
 from ..sample.samplers import create_sampler
@@ -28,7 +28,6 @@ from .schemas import (
     ValuePayload,
     jsonable,
 )
-
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T")

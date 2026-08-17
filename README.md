@@ -77,6 +77,29 @@ python -m prmeval.cli list-metrics
 - [本地数据格式与 Dataset Adapter](docs/DATASETS.md)
 - [原始数据集统一工具](dataset_unify/README.md)
 
+## 推理代码结构
+
+```text
+prmeval/infer/
+├── __init__.py          # 注册加载与 create_infer() 公共入口
+├── base.py              # HTTP、认证、重试、请求计数和图片编码
+├── openai.py            # Chat Completions 与 JSON Schema 校验
+├── mock_server.py       # 本地 OpenAI-compatible contract 服务
+└── baselines/
+    ├── common.py        # progress baseline 公共辅助逻辑
+    ├── gvl.py
+    ├── roboreward.py
+    ├── robodopamine.py
+    ├── topreward.py
+    ├── vlac.py
+    ├── rbm.py
+    ├── rewind.py
+    ├── rlvlmf.py
+    └── progress_test.py
+```
+
+新增内置模型时，在 `baselines/` 中创建与 registry 名称一致的文件，并在 `baselines/__init__.py` 中导入，使 `@register_infer(...)` 在包加载时完成注册。不要新增本地模型加载路径或 `/v1/evaluations` 等独立传输协议。
+
 原始数据需要先通过独立的 [`dataset_unify`](dataset_unify/) 工具转换为本地标准 Hugging Face Dataset，再交给 PRMEval 读取。数据统一的字段、配置和新增数据集方法均以该工具自己的文档为准。
 
 ## 致谢与来源说明
@@ -84,6 +107,5 @@ python -m prmeval.cli list-metrics
 本项目基于开源项目 [Robometer](https://github.com/robometer/robometer) 进行重构与扩展。
 
 感谢 Robometer 项目的作者和贡献者开源其代码。本仓库中的部分实现来源于 Robometer，并在此基础上进行了代码结构重组、重构以及功能扩展，以适配本项目的具体需求。
-
 
 

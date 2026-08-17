@@ -4,6 +4,8 @@
 
 `prmeval/` contains the evaluation package. Schemas, registries, configuration, orchestration, and artifact handling live in `prmeval/core/`; dataset adapters and Stage 1 sampling are in `prmeval/sample/`; remote model integrations and Stage 2 inference are in `prmeval/infer/`; and Stage 3 metrics are in `prmeval/metrics/`. The main CLI is `prmeval/cli.py`; dataset preprocessing also exposes `prmeval/sample/prepare.py`.
 
+Built-in infer implementations live one model per file in `prmeval/infer/baselines/`, using the registry name as the filename (for example, `topreward` belongs in `baselines/topreward.py`). Shared baseline helpers belong in `baselines/common.py`; generic HTTP and OpenAI-compatible Chat Completions behavior belongs in `infer/base.py` and `infer/openai.py`. Import every built-in baseline from `baselines/__init__.py` so registration occurs when `prmeval.infer` is imported. `prmeval.infer.create_infer()` is the public construction entry point; do not recreate an `infer/adapters.py` forwarding layer.
+
 `dataset_unify/` is a separate raw-dataset conversion tool. Its loaders are in `dataset_unify/dataset_loaders/`, converter registration is in `dataset_unify/converters.py`, conversion YAML files are in `dataset_unify/configs/data_gen_configs/`, and source-specific instructions are in `dataset_unify/dataset_guides/`. Do not make PRMEval import dataset-specific loaders directly.
 
 Keep tests in `tests/`, with reusable inputs under `tests/fixtures/`. Evaluation YAML files belong in `configs/eval/`. Put runnable smoke examples and checked-in expected artifacts in `examples/`; maintain protocol and configuration documentation in `docs/`.
@@ -24,11 +26,11 @@ Keep tests in `tests/`, with reusable inputs under `tests/fixtures/`. Evaluation
 
 Use four-space indentation, Python 3.10+ syntax, type hints, and a 120-character line limit. Ruff enforces `E`, `W`, `F`, `I`, `B`, `C4`, `UP`, and `RUF` rules. Use `snake_case` for functions, modules, and variables; `PascalCase` for classes; and descriptive YAML names.
 
-Preserve the `bench.record.v1` `EvaluationRecord` contract across sampled and inferred artifacts. New datasets, samplers, infer adapters, and metrics should use the registries in `prmeval/core/registry.py`. Dataset-unification converters should use the registry in `dataset_unify/registry.py` and produce the fixed schema through `build_standard_dataset()` rather than adding source-specific fields to PRMEval.
+Preserve the `bench.record.v1` `EvaluationRecord` contract across sampled and inferred artifacts. New datasets, samplers, infer baselines, and metrics should use the registries in `prmeval/core/registry.py`. All built-in infer baselines use OpenAI-compatible `POST /v1/chat/completions`; do not add local model/checkpoint loading or revive the removed `specialized`/`v1/evaluations` transport. Dataset-unification converters should use the registry in `dataset_unify/registry.py` and produce the fixed schema through `build_standard_dataset()` rather than adding source-specific fields to PRMEval.
 
 ## Testing Guidelines
 
-Tests use `unittest.TestCase` and are collected by pytest. Name files `test_*.py` and methods `test_<behavior>`. Add focused regression tests for schema validation, adapters, samplers, registries, remote request contracts, metric outputs, and dataset-unification contracts. Prefer mocks and small checked-in fixtures over live services. The dataset-unification contract test may generate a minimal local MP4 but must not depend on external datasets or services.
+Tests use `unittest.TestCase` and are collected by pytest. Name files `test_*.py` and methods `test_<behavior>`. Add focused regression tests for schema validation, baselines, samplers, registries, OpenAI Chat request contracts, metric outputs, and dataset-unification contracts. Prefer mocks and small checked-in fixtures over live services. The dataset-unification contract test may generate a minimal local MP4 but must not depend on external datasets or services.
 
 Run `pytest`, `ruff check .`, and `ruff format --check .` before submitting changes. For targeted iteration, use commands such as `pytest tests/test_evaluation.py` or `pytest tests/test_dataset_unify_contract.py`.
 

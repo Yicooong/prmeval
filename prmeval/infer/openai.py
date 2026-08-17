@@ -6,17 +6,6 @@ from typing import Any, ClassVar
 from ..core.schemas import EvaluationSample, PreferencePrediction, PreferenceSample, ProgressPrediction, ProgressSample
 from .base import RemoteError, RemoteInfer, parse_json_content, vision_content
 
-PROGRESS_SCHEMA = {
-    "name": "progress_prediction",
-    "strict": True,
-    "schema": {
-        "type": "object",
-        "properties": {"progress": {"type": "array", "items": {"type": "number", "minimum": 0, "maximum": 1}}},
-        "required": ["progress"],
-        "additionalProperties": False,
-    },
-}
-
 
 def progress_schema(num_frames: int) -> dict[str, Any]:
     """Build a strict progress schema whose output length matches the input frames."""

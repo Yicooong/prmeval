@@ -84,6 +84,20 @@ stage = inferred
 
 远程请求只使用 `input.task`、`input.items[].frames` 和 infer adapter 的 prompt/请求参数，`target` 不会发送给模型。`sample_id`、`evaluation`、`input` 和 `target` 在推理过程中不得改变。
 
+运行器通过 `prmeval.infer.create_infer()` 从 registry 构造模型。内置实现按模型拆分在
+`prmeval/infer/baselines/<name>.py`，网络请求统一复用 `infer/base.py` 和 `infer/openai.py`：
+
+```text
+Evaluator.infer()
+    -> prmeval.infer.create_infer(config)
+    -> baselines/<name>.py::predict(sample)
+    -> OpenAI-compatible POST /v1/chat/completions
+    -> ProgressPrediction / PreferencePrediction
+    -> EvaluationRecord(stage="inferred")
+```
+
+目前没有本地模型加载或其他远程 transport；配置中的 `infer.transport` 只能是 `openai_chat`。
+
 标准化后的结果示例：
 
 ```json
@@ -106,8 +120,7 @@ stage = inferred
 
 GVL、RL-VLM-F、RoboReward、RoboDopamine、TOPReward、VLAC、RBM 和 ReWiND 都使用 OpenAI-compatible
 `POST /v1/chat/completions`。其中 TOPReward 还要求服务支持 `logprobs` 和 `top_logprobs`，并在生成 token
-或候选 token 中返回 `True` 的原始 logprob。旧的 `prmeval.infer.specialized` 协议只作为扩展兼容层保留，
-不再是这些内置 infer 的传输方式。
+或候选 token 中返回 `True` 的原始 logprob。
 
 Stage 2 不会对帧重新采样。模型允许的最大帧数应通过 Stage 1 的 `sampling.max_frames` 设置，使发送给模型的
 帧、target progress 和返回曲线始终一一对应。

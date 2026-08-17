@@ -1,4 +1,4 @@
-"""Deterministic contract server for OpenAI-compatible and legacy specialized infer tests."""
+"""Deterministic contract server for OpenAI-compatible infer tests."""
 
 from __future__ import annotations
 
@@ -6,21 +6,16 @@ import argparse
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from .specialized import SpecializedRequest
-
 
 class ContractHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = self.path.rstrip("/")
-        if path not in {"/v1/chat/completions", "/v1/evaluations"}:
+        if path != "/v1/chat/completions":
             self.send_error(404)
             return
         length = int(self.headers.get("Content-Length", "0"))
         payload = json.loads(self.rfile.read(length))
-        if path == "/v1/chat/completions":
-            self._chat_completion(payload)
-        else:
-            self._specialized(payload)
+        self._chat_completion(payload)
 
     def _chat_completion(self, payload: dict) -> None:
         response_format = payload.get("response_format")
@@ -82,24 +77,6 @@ class ContractHandler(BaseHTTPRequestHandler):
             for message in payload.get("messages", [])
             for item in message.get("content", [])
             if isinstance(message.get("content"), list)
-        )
-
-    def _specialized(self, payload: dict) -> None:
-        request = SpecializedRequest.model_validate(payload)
-        if request.prediction_type in {"progress", "instruction_likelihood"}:
-            count = len(request.trajectories[0].frames)
-            values = [i / max(1, count - 1) for i in range(count)]
-            prediction = {"trajectory_id": request.trajectories[0].id, "progress": values}
-        else:
-            prediction = {"preference_probability": 0.75}
-        self._send_json(
-            {
-                "id": request.request_id,
-                "model": request.model,
-                "model_version": "mock-v1",
-                "predictions": [prediction],
-                "usage": {},
-            }
         )
 
     def _send_json(self, value: dict) -> None:

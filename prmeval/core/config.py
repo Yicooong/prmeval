@@ -32,7 +32,7 @@ class SamplingConfig(BaseModel):
 
 class InferConfig(BaseModel):
     name: str
-    transport: Literal["openai_chat", "specialized"] | None = None
+    transport: Literal["openai_chat"] | None = None
     base_url: str
     api_key: str | None = None
     model_id: str
