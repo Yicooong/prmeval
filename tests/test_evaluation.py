@@ -457,8 +457,41 @@ infer:
         self.assertEqual(progress_definition["minItems"], 3)
         self.assertEqual(progress_definition["maxItems"], 3)
 
+    def test_sole_r1_infer_uses_sequential_openai_chat_requests(self):
+        infer = create_infer(
+            InferConfig(
+                name="sole_r1",
+                mode="remote",
+                base_url="http://service/v1",
+                model_id="sole-model",
+                max_retries=0,
+            )
+        )
+        responses = [
+            _BodyResponse({"choices": [{"message": {"content": "<think>approaching</think><answer>20%</answer>"}}]}),
+            _BodyResponse({"choices": [{"message": {"content": "<think>complete</think><answer>100%</answer>"}}]}),
+        ]
+        urls = []
+        payloads = []
+
+        def mock_post(url, **kwargs):
+            urls.append(url)
+            payloads.append(kwargs["json"])
+            return responses.pop(0)
+
+        with patch("httpx.post", side_effect=mock_post):
+            prediction = infer.predict(_make_progress_sample())
+
+        self.assertEqual(prediction.progress, [0.0, 0.2, 1.0])
+        self.assertEqual(urls, ["http://service/v1/chat/completions"] * 2)
+        self.assertTrue(all(payload["model"] == "sole-model" for payload in payloads))
+        self.assertTrue(all("response_format" not in payload for payload in payloads))
+        second_prompt = payloads[1]["messages"][1]["content"][-1]["text"]
+        self.assertIn("previous timestep is 20%", second_prompt)
+        self.assertEqual(len(prediction.raw_response), 2)
+
     def test_remote_progress_baselines_use_openai_chat_transport(self):
-        for name in ("gvl", "roboreward", "robodopamine", "topreward", "vlac", "rbm", "rewind"):
+        for name in ("gvl", "roboreward", "robodopamine", "sole_r1", "topreward", "vlac", "rbm", "rewind"):
             infer = create_infer(InferConfig(
                 name=name, mode="remote", base_url="http://service/v1", model_id="model"
             ))

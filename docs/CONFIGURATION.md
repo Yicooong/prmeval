@@ -88,7 +88,7 @@ resume: false
 | `options` | 传给具体 infer adapter 的扩展配置 |
 
 内置模型统一使用 local-first 模型接口。`roboreward`、`robodopamine`、`topreward`、`vlac`、`rbm` 和
-`rewind` 支持本地推理，并可选择远程模式；`gvl`、`rlvlmf` 和 `progress_test` 当前仅支持远程模式。
+`rewind` 支持本地推理，并可选择远程模式；`gvl`、`rlvlmf`、`sole_r1` 和 `progress_test` 当前仅支持远程模式。
 远程方法统一复用 OpenAI-compatible `POST /v1/chat/completions` 客户端。完整新增模型方法见
 [本地优先模型接入](LOCAL_MODELS.md)。
 
@@ -104,6 +104,7 @@ resume: false
 | `gvl` | 按任务和帧数固定乱序的全部查询帧，单次请求 | 逐帧 0–100 百分比恢复原序后除以 100 |
 | `roboreward` | 完整轨迹单次请求 | 1–5 分数映射为 `(score - 1) / 4` 并复制到全部帧 |
 | `robodopamine` | 每个选中 transition 一次 8 图请求 | 按 incremental/forward/backward 公式累积 |
+| `sole_r1` | 首帧固定为 0；随后逐帧发送首帧、上一帧和当前帧，并递推上一预测 | 解析 `<answer>` 百分比后除以 100 |
 | `topreward` | 每个选中 trajectory prefix 一次请求 | True logprob 归一化并插值到全部帧 |
 | `vlac` | 完整有序轨迹单次请求 | critic value 归一化，并按末值补齐或截断 |
 | `rbm` / `rewind` | 完整有序轨迹单次请求 | 与输入严格等长的 `[0,1]` progress curve |

@@ -7,18 +7,20 @@ from .rbm_model import RBMModel
 from .rlvlmf import RLVLMF
 from .robodopamine import RoboDopamine
 from .roboreward import RoboReward
+from .sole_r1 import SoleR1
 from .topreward import TopReward
 from .vlac import VLAC
 
 __all__ = [
     "GVL",
+    "RLVLMF",
+    "VLAC",
     "ProgressTestModel",
     "RBMModel",
-    "RLVLMF",
     "RoboDopamine",
     "RoboReward",
+    "SoleR1",
     "TopReward",
-    "VLAC",
 ]
 
 
@@ -30,6 +32,7 @@ def register_all() -> None:
     register_preference_model("rlvlmf")(RLVLMF)
     register_progress_model("robodopamine")(RoboDopamine)
     register_progress_model("roboreward")(RoboReward)
+    register_progress_model("sole_r1")(SoleR1)
     register_progress_model("topreward")(TopReward)
     register_progress_model("vlac")(VLAC)
 

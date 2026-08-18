@@ -8,12 +8,13 @@ import numpy as np
 
 from prmeval.infer.baselines import (
     GVL,
-    RBMModel,
     RLVLMF,
+    VLAC,
+    RBMModel,
     RoboDopamine,
     RoboReward,
+    SoleR1,
     TopReward,
-    VLAC,
 )
 
 
@@ -47,21 +48,81 @@ class BaselineRemoteTest(unittest.TestCase):
         self.assertEqual(result.values.tolist(), [0.75] * 4)
         self.assertEqual(remote.chat_calls[0][1]["name"], "roboreward_score")
 
+    def test_sole_r1_remote_carries_progress_across_stage_one_frames(self):
+        frames = np.stack([np.full((2, 2, 3), value, dtype=np.uint8) for value in (0, 64, 128)])
+        remote = _RemoteStub(
+            completions=[
+                {"choices": [{"message": {"content": "<think>closer</think><answer>12.5%</answer>"}}]},
+                {"choices": [{"message": {"content": "<think>grasped</think><answer>80%</answer>"}}]},
+            ]
+        )
+
+        result = SoleR1.remote_compute_progress(frames, "pick up the cube", None, remote, {})
+
+        np.testing.assert_allclose(result.values, [0.0, 0.125, 0.8])
+        self.assertEqual(len(remote.completion_calls), 2)
+        second_prompt = remote.completion_calls[1][0][1]["content"][-1]["text"]
+        self.assertIn("previous timestep is 12.5%", second_prompt)
+        first_images = [
+            item["image_url"]["url"]
+            for item in remote.completion_calls[0][0][1]["content"]
+            if item["type"] == "image_url"
+        ]
+        self.assertEqual(len(first_images), 3)
+        self.assertEqual(first_images[0], first_images[1])
+        self.assertNotEqual(first_images[1], first_images[2])
+        self.assertEqual([item["frame_index"] for item in result.raw_response], [1, 2])
+
+    def test_sole_r1_single_frame_does_not_call_remote(self):
+        remote = _RemoteStub()
+        result = SoleR1.remote_compute_progress(self.frames[:1], "task", None, remote, {})
+        self.assertEqual(result.values.tolist(), [0.0])
+        self.assertEqual(remote.completion_calls, [])
+        self.assertEqual(result.raw_response, [])
+
+    def test_sole_r1_rejects_empty_or_malformed_inputs(self):
+        with self.assertRaisesRegex(ValueError, "at least one"):
+            SoleR1.remote_compute_progress(self.frames[:0], "task", None, _RemoteStub(), {})
+
+        malformed = _RemoteStub(
+            completions=[
+                {"choices": [{"message": {"content": "progress is probably ten percent"}}]},
+            ]
+        )
+        with self.assertRaisesRegex(Exception, "numeric <answer>"):
+            SoleR1.remote_compute_progress(self.frames[:2], "task", None, malformed, {})
+
+    def test_sole_r1_parses_signed_numbers_without_clipping(self):
+        self.assertEqual(SoleR1._parse_progress_percent("<answer>-2.5%</answer>"), -2.5)
+        remote = _RemoteStub(
+            completions=[
+                {"choices": [{"message": {"content": "<answer>-2.5%</answer>"}}]},
+            ]
+        )
+        with self.assertRaisesRegex(Exception, "outside PRMEval"):
+            SoleR1.remote_compute_progress(self.frames[:2], "task", None, remote, {})
+
     def test_topreward_remote_prefix_logprobs(self):
         completions = []
         for reward in (-3.0, -2.0, -1.0):
-            completions.append({
-                "choices": [{
-                    "message": {"content": "False"},
-                    "logprobs": {
-                        "content": [{
-                            "token": "False",
-                            "logprob": -0.1,
-                            "top_logprobs": [{"token": " True", "logprob": reward}],
-                        }]
-                    },
-                }]
-            })
+            completions.append(
+                {
+                    "choices": [
+                        {
+                            "message": {"content": "False"},
+                            "logprobs": {
+                                "content": [
+                                    {
+                                        "token": "False",
+                                        "logprob": -0.1,
+                                        "top_logprobs": [{"token": " True", "logprob": reward}],
+                                    }
+                                ]
+                            },
+                        }
+                    ]
+                }
+            )
         remote = _RemoteStub(completions=completions)
         result = TopReward.remote_compute_progress(
             self.frames,
@@ -75,10 +136,12 @@ class BaselineRemoteTest(unittest.TestCase):
         self.assertTrue(all(call[1]["logprobs"] for call in remote.completion_calls))
 
     def test_robodopamine_remote_incremental_curve(self):
-        remote = _RemoteStub(chats=[
-            {"relative_change_percent": 50},
-            {"relative_change_percent": -50},
-        ])
+        remote = _RemoteStub(
+            chats=[
+                {"relative_change_percent": 50},
+                {"relative_change_percent": -50},
+            ]
+        )
         result = RoboDopamine.remote_compute_progress(
             self.frames,
             "task",
@@ -122,7 +185,7 @@ class BaselineRemoteTest(unittest.TestCase):
         rejected = self.frames[2:]
         remote = _RemoteStub(chats=[{"preference": "A", "probability_a": 0.8}])
         result = RLVLMF.remote_compute_preference(chosen, rejected, "task", remote, {})
-        seed = int(hashlib.sha256("task|2|2".encode()).hexdigest()[:16], 16)
+        seed = int(hashlib.sha256(b"task|2|2").hexdigest()[:16], 16)
         if seed % 2:
             self.assertEqual((result.preference, result.chosen_probability), ("chosen", 0.8))
         else:

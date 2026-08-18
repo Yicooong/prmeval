@@ -101,6 +101,7 @@ prmeval/infer/
     ├── gvl.py
     ├── roboreward.py
     ├── robodopamine.py
+    ├── sole_r1.py       # SOLE-R1 逐帧递推 OpenAI-compatible 远程模型
     ├── topreward.py
     ├── vlac.py
     ├── rbm_model.py     # 同时注册 rbm 和 rewind

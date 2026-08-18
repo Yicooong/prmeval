@@ -53,7 +53,7 @@ class RoboReward(ProgressModel):
         self,
         model_path: str = "teetone/RoboReward-8B",
         max_new_tokens: int = 128,
-        use_unsloth: bool = True,
+        use_unsloth: bool = False,
     ):
         """
         Initialize RoboReward model.
