@@ -12,48 +12,120 @@ RoboReward predicts discrete scores (1-5) for task completion:
 Based on: https://huggingface.co/teetone/RoboReward-8B
 """
 
-import logging
 import re
-import shutil
 import tempfile
 import uuid
 from pathlib import Path
-from typing import List, Optional
-
+from typing import List, Optional, Union
 import numpy as np
 from PIL import Image
+import torch
+import shutil
 
-from ..base import vision_content
-from ..model import ProgressModel, ProgressResult, RemoteContext
+from transformers import Qwen3VLForConditionalGeneration, AutoProcessor
+from qwen_vl_utils import process_vision_info
 
-logger = logging.getLogger(__name__)
+try:
+    from unsloth import FastVisionModel
+
+    HAS_UNSLOTH = True
+except ImportError:
+    HAS_UNSLOTH = False
 
 
-def _convert_frames_to_pil_images(frames_array: np.ndarray) -> list[Image.Image]:
-    images = []
-    for frame in frames_array:
-        array = np.asarray(frame)
-        if array.dtype != np.uint8:
-            array = np.clip(array, 0, 255).astype(np.uint8)
-        if array.ndim == 3 and array.shape[0] in (1, 3, 4):
-            array = np.transpose(array, (1, 2, 0))
-        if array.ndim == 2:
-            images.append(Image.fromarray(array, "L").convert("RGB"))
+logger = get_logger()
+
+def convert_frames_to_pil_images(frames, frames_shape=None):
+    """Convert frames to PIL images if they are numpy arrays or serialized bytes.
+
+    Handles:
+    - Bytes with shape: deserializes to numpy array then converts
+    - Numpy arrays (TxHxWxC or HxWxC): converts each frame to PIL Image
+    - List of numpy arrays: converts each to PIL Image
+    - List of PIL Images: returns as-is
+    - List of mixed types (strings, PIL Images, numpy arrays): converts appropriately
+    """
+    from PIL import Image
+
+    # If frames are serialized bytes, deserialize first
+    if isinstance(frames, bytes):
+        # Deserialize bytes to numpy array (TxHxWxC) using provided shape
+        if frames_shape is not None:
+            # Convert to tuple if it's a list
+            if isinstance(frames_shape, list):
+                frames_shape = tuple(frames_shape)
+            try:
+                frames = np.frombuffer(frames, dtype=np.uint8).reshape(frames_shape)
+            except Exception as e:
+                print(f"Warning: Failed to reshape with provided shape {frames_shape}: {e}")
+                # Fall back to 1D array
+                frames = np.frombuffer(frames, dtype=np.uint8)
         else:
-            images.append(Image.fromarray(array[..., :3], "RGB"))
-    return images
+            # No shape provided, try to infer
+            frames = np.frombuffer(frames, dtype=np.uint8)
 
+    # If frames are numpy array (TxHxWxC), convert to list of PIL images
+    if isinstance(frames, np.ndarray):
+        pil_images = []
 
-class RoboReward(ProgressModel):
+        # Handle different array shapes
+        if len(frames.shape) == 4:  # TxHxWxC
+            for i in range(frames.shape[0]):  # Iterate over time dimension
+                frame = frames[i]  # HxWxC
+                # Ensure uint8 dtype
+                if frame.dtype != np.uint8:
+                    frame = np.clip(frame, 0, 255).astype(np.uint8)
+                pil_image = Image.fromarray(frame)
+                pil_images.append(pil_image)
+        elif len(frames.shape) == 3:  # HxWxC (single frame)
+            frame = frames
+            if frame.dtype != np.uint8:
+                frame = np.clip(frame, 0, 255).astype(np.uint8)
+            pil_image = Image.fromarray(frame)
+            pil_images.append(pil_image)
+        else:
+            raise ValueError(f"Unexpected frames shape {frames.shape}. Expected 3D (HxWxC) or 4D (TxHxWxC) array.")
+
+        return pil_images
+
+    # If frames are list, handle each element
+    if isinstance(frames, list):
+        pil_images = []
+        for frame in frames:
+            if isinstance(frame, str):
+                # File path - open it
+                pil_images.append(Image.open(frame))
+            elif isinstance(frame, Image.Image):
+                # Already PIL Image
+                pil_images.append(frame)
+            elif isinstance(frame, np.ndarray):
+                # Numpy array - convert to PIL
+                if frame.dtype != np.uint8:
+                    frame = np.clip(frame, 0, 255).astype(np.uint8)
+                pil_image = Image.fromarray(frame)
+                pil_images.append(pil_image)
+            else:
+                # Try to convert to numpy array first
+                try:
+                    frame_array = np.array(frame)
+                    if frame_array.dtype != np.uint8:
+                        frame_array = np.clip(frame_array, 0, 255).astype(np.uint8)
+                    pil_images.append(Image.fromarray(frame_array))
+                except Exception as e:
+                    print(f"Warning: Could not convert frame to PIL Image: {e}")
+                    continue
+        return pil_images
+
+    raise ValueError(f"Unsupported frames type: {type(frames)}")
+ 
+class RoboReward:
     """RoboReward baseline for discrete end-of-episode progress reward prediction."""
-
-    supports_remote = True
 
     def __init__(
         self,
         model_path: str = "teetone/RoboReward-8B",
         max_new_tokens: int = 128,
-        use_unsloth: bool = False,
+        use_unsloth: bool = True,
     ):
         """
         Initialize RoboReward model.
@@ -63,26 +135,10 @@ class RoboReward(ProgressModel):
             max_new_tokens: Maximum number of tokens to generate
             use_unsloth: Whether to use unsloth for faster inference (default: True)
         """
-        try:
-            import torch
-            from qwen_vl_utils import process_vision_info
-            from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
-        except ImportError as exc:
-            raise RuntimeError(
-                "RoboReward local inference requires torch, transformers, and qwen-vl-utils"
-            ) from exc
-
-        try:
-            from unsloth import FastVisionModel
-        except ImportError:
-            FastVisionModel = None
-
-        self.torch = torch
-        self.process_vision_info = process_vision_info
-        logger.info("Loading RoboReward model: %s", model_path)
+        logger.info(f"Loading RoboReward model: {model_path}")
 
         # Use unsloth for faster inference if available and requested
-        if use_unsloth and FastVisionModel is not None:
+        if use_unsloth and HAS_UNSLOTH:
             print("Using Unsloth for faster inference")
             # Load model with unsloth's FastVisionModel
             self.model, _ = FastVisionModel.from_pretrained(
@@ -93,7 +149,7 @@ class RoboReward(ProgressModel):
             )
         else:
             # Standard loading
-            if use_unsloth and FastVisionModel is None:
+            if use_unsloth and not HAS_UNSLOTH:
                 print("Warning: Unsloth requested but not available, using standard loading")
             self.model = Qwen3VLForConditionalGeneration.from_pretrained(
                 model_path,
@@ -109,8 +165,7 @@ class RoboReward(ProgressModel):
 
         print(f"RoboReward model loaded on device: {self.model.device}")
 
-    @staticmethod
-    def _build_prompt(task_description: str) -> str:
+    def _build_prompt(self, task_description: str) -> str:
         """Build the prompt for RoboReward inference.
 
         Args:
@@ -130,8 +185,7 @@ Rubric for end-of-episode progress (judge only the final state without time limi
 Task: {task}""".format(task=task_description)
         return prompt
 
-    @staticmethod
-    def _parse_score(output_text: str) -> Optional[int]:
+    def _parse_score(self, output_text: str) -> Optional[int]:
         """Parse discrete score (1-5) from model output.
 
         Args:
@@ -179,7 +233,7 @@ Task: {task}""".format(task=task_description)
             return []
 
         # Convert frames to PIL Images
-        frames_pil = _convert_frames_to_pil_images(frames_array)
+        frames_pil = convert_frames_to_pil_images(frames_array)
 
         logger.info(f"RoboReward: Converted {len(frames_pil)} frames to PIL Images")
 
@@ -228,7 +282,7 @@ Task: {task}""".format(task=task_description)
         text = self.processor.apply_chat_template(message, tokenize=False, add_generation_prompt=True)
 
         # Process vision info (qwen-vl-utils handles resizing)
-        image_inputs, video_inputs, video_kwargs = self.process_vision_info(
+        image_inputs, video_inputs, video_kwargs = process_vision_info(
             [message],
             image_patch_size=16,
             return_video_kwargs=True,
@@ -257,7 +311,7 @@ Task: {task}""".format(task=task_description)
         inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
 
         # Generate
-        with self.torch.no_grad():
+        with torch.no_grad():
             generated_ids = self.model.generate(
                 **inputs,
                 max_new_tokens=self.max_new_tokens,
@@ -281,7 +335,7 @@ Task: {task}""".format(task=task_description)
 
         # Return same discrete score for all frames in this subsequence
         # Use original num_frames from frames_array (before duplication)
-        original_num_frames = len(_convert_frames_to_pil_images(frames_array))
+        original_num_frames = len(convert_frames_to_pil_images(frames_array))
 
         # because RoboReward returns a score between 1 and 5, we need to normalize it to 0-1
         result = [float(discrete_score) / 4.0 - 0.25] * original_num_frames
@@ -291,11 +345,8 @@ Task: {task}""".format(task=task_description)
 
         return result
 
-    def compute_progress_batch(
-        self,
-        frames_list: List[np.ndarray],
-        task_descriptions: List[str],
-        reference_video_paths: list[str | None] | None = None,
+    def compute_progress_batched(
+        self, frames_list: List[np.ndarray], task_descriptions: List[str]
     ) -> List[List[Optional[float]]]:
         """
         Compute progress predictions for a batch of frame sequences.
@@ -331,7 +382,7 @@ Task: {task}""".format(task=task_description)
                 continue
 
             # Convert frames to PIL Images
-            frames_pil = _convert_frames_to_pil_images(frames_array)
+            frames_pil = convert_frames_to_pil_images(frames_array)
             if not frames_pil:
                 all_messages.append(None)
                 original_frame_counts.append(0)
@@ -393,7 +444,7 @@ Task: {task}""".format(task=task_description)
             all_texts.append(text)
 
             # Process vision info
-            image_inputs, video_inputs, video_kwargs = self.process_vision_info(
+            image_inputs, video_inputs, video_kwargs = process_vision_info(
                 [message],
                 image_patch_size=16,
                 return_video_kwargs=True,
@@ -431,7 +482,7 @@ Task: {task}""".format(task=task_description)
             inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
 
             # Generate
-            with self.torch.no_grad():
+            with torch.no_grad():
                 generated_ids = self.model.generate(
                     **inputs,
                     max_new_tokens=self.max_new_tokens,
@@ -473,40 +524,3 @@ Task: {task}""".format(task=task_description)
                 shutil.rmtree(tmpdir, ignore_errors=True)
 
         return results
-
-    def compute_progress_batched(
-        self,
-        frames_list: List[np.ndarray],
-        task_descriptions: List[str],
-    ) -> List[List[Optional[float]]]:
-        """Backward-compatible alias; the PRMEval adapter uses compute_progress_batch."""
-        return self.compute_progress_batch(frames_list, task_descriptions)
-
-    @classmethod
-    def remote_compute_progress(
-        cls,
-        frames_array: np.ndarray,
-        task_description: str,
-        reference_video_path: str | None,
-        remote: RemoteContext,
-        options: dict,
-    ) -> ProgressResult:
-        if len(frames_array) == 0:
-            return ProgressResult([], raw_response=None)
-        prompt = cls._build_prompt(task_description)
-        content = [{"type": "text", "text": prompt}]
-        content.extend(vision_content(frames_array))
-        schema = {
-            "name": "roboreward_score",
-            "strict": True,
-            "schema": {
-                "type": "object",
-                "properties": {"score": {"type": "integer", "minimum": 1, "maximum": 5}},
-                "required": ["score"],
-                "additionalProperties": False,
-            },
-        }
-        parsed, raw = remote.chat([{"role": "user", "content": content}], schema)
-        score = int(parsed["score"])
-        values = np.full(len(frames_array), (score - 1) / 4, dtype=np.float64)
-        return ProgressResult(values, raw_response=raw)

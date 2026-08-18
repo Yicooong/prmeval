@@ -4,16 +4,11 @@
 import os
 import time
 import base64
-import hashlib
 import random
 from io import BytesIO
 from typing import List, Dict, Any, Optional, Tuple
 from PIL import Image
 import numpy as np
-
-from ..base import vision_content
-from ..model import PreferenceModel, PreferenceResult, RemoteContext
-from ..openai import PREFERENCE_SCHEMA
 
 try:
     import google.generativeai as genai
@@ -30,15 +25,12 @@ except ImportError:
     OPENAI_AVAILABLE = False
 
 
-class RLVLMF(PreferenceModel):
+class RLVLMF:
     """RL-VLM-F baseline for preference comparison between trajectories.
 
     Uses vision-language models (Gemini or GPT-4V) to directly compare two trajectories
     and predict which one better achieves a given task goal.
     """
-
-    supports_local = False
-    supports_remote = True
 
     def __init__(self, vlm_provider: str = "gemini", temperature: float = 0.0):
         self.vlm_provider = vlm_provider
@@ -164,8 +156,8 @@ class RLVLMF(PreferenceModel):
         base = """ Each frame comes from a robot trajectory. (Think causally and use image comparison to verify any confusion between the base of the robot and the end effector)
 1. What is shown in the first image (Image A)?
 2. What is shown in the second image (Image B)?
-3. For this question here is the Goal Text: {goal_text}
-Is the goal being better achieved in Image A or Image B?
+3. For this question here is the Goal Text: {goal_text}  
+Is the goal being better achieved in Image A or Image B? 
 Reply a single line of 0 if the goal is better achieved in Image A, or 1 if it is better achieved in Image B.
 Reply -1 if the text is really unsure about either making any progress towards the goal or there is absolutely no difference. (only use this if there is no discernible signs of progress in either image or no discernible difference between the progress in the two images for the given task)
 """
@@ -253,44 +245,3 @@ Reply -1 if the text is really unsure about either making any progress towards t
             return "B", full_response
         else:
             return "tie", full_response
-
-    @classmethod
-    def remote_compute_preference(
-        cls,
-        chosen_frames,
-        rejected_frames,
-        task_description: str,
-        remote: RemoteContext,
-        options: dict,
-    ) -> PreferenceResult:
-        chosen = chosen_frames[-1]
-        rejected = rejected_frames[-1]
-        seed = int(
-            hashlib.sha256(
-                f"{task_description}|{len(chosen_frames)}|{len(rejected_frames)}".encode()
-            ).hexdigest()[:16],
-            16,
-        )
-        chosen_first = bool(seed % 2)
-        frames = [chosen, rejected] if chosen_first else [rejected, chosen]
-        prompt = (
-            "Each image is the final frame of a robot trajectory. Think causally and use image comparison to "
-            "distinguish the robot base from the end effector. Describe Image A and Image B, then decide where "
-            f"the goal is better achieved. The goal is {task_description}. Return A, B, or tie; use tie only "
-            "when there is no discernible progress or difference. Also return the probability that Image A is "
-            "better."
-        )
-        content = [{"type": "text", "text": prompt}]
-        content.extend(vision_content(frames, "Image"))
-        parsed, raw = remote.chat([{"role": "user", "content": content}], PREFERENCE_SCHEMA)
-        label = parsed["preference"]
-        probability_a = float(parsed["probability_a"])
-        chosen_probability = probability_a if chosen_first else 1 - probability_a
-        if label == "tie":
-            preference = "tie"
-            chosen_probability = 0.5
-        elif (label == "A") == chosen_first:
-            preference = "chosen"
-        else:
-            preference = "rejected"
-        return PreferenceResult(chosen_probability, preference, raw_response=raw)

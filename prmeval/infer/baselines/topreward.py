@@ -10,16 +10,16 @@ Paper: TOPReward: Token Probabilities as Hidden Zero-Shot Rewards for Robotics (
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-import logging
 from typing import Any, List, Optional
 
 import numpy as np
+import torch
+import torch.nn.functional as F
 from PIL import Image
+from qwen_vl_utils import process_vision_info
+from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
 
-from ..base import RemoteError, vision_content
-from ..model import ProgressModel, ProgressResult, RemoteContext
 
-logger = logging.getLogger(__name__)
 
 # Default image size used by TOPReward for video frames
 _TOPREWARD_IMG_SIZE = 224
@@ -71,10 +71,8 @@ def _normalize_rewards(rewards: Sequence[float], method: str = "minmax") -> np.n
     raise ValueError(f"Unknown normalization method: {method}")
 
 
-class TopReward(ProgressModel):
+class TopReward:
     """TOPReward baseline: instruction-conditioned log-likelihood progress from a video VLM."""
-
-    supports_remote = True
 
     def __init__(
         self,
@@ -95,19 +93,6 @@ class TopReward(ProgressModel):
             add_chat_template: Whether to use chat template for instruction prompt.
             fps: Frames per second for video input to the VLM.
         """
-        try:
-            import torch
-            import torch.nn.functional as functional
-            from qwen_vl_utils import process_vision_info
-            from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
-        except ImportError as exc:
-            raise RuntimeError(
-                "TOPReward local inference requires torch, transformers, and qwen-vl-utils"
-            ) from exc
-
-        self.torch = torch
-        self.functional = functional
-        self.process_vision_info = process_vision_info
         self.model_path = model_path
         self.max_frames = max_frames
         self.num_prefix_samples = num_prefix_samples
@@ -159,7 +144,7 @@ class TopReward(ProgressModel):
                 templated_messages, tokenize=False, add_generation_prompt=True
             )
             full_text = f"{prompt_chat}True"
-            image_inputs, video_inputs = self.process_vision_info(templated_messages)
+            image_inputs, video_inputs = process_vision_info(templated_messages)
         else:
             instruction_suffix = (
                 f"{instruction} Decide whether the above statement is True or not. The answer is: True"
@@ -179,7 +164,7 @@ class TopReward(ProgressModel):
             if eos_token:
                 prompt_chat = prompt_chat.split(eos_token)[0]
             full_text = f"{prompt_chat}{instruction_suffix}"
-            image_inputs, video_inputs = self.process_vision_info(user_messages)
+            image_inputs, video_inputs = process_vision_info(user_messages)
 
         inputs = self.processor(
             text=[full_text],
@@ -196,12 +181,12 @@ class TopReward(ProgressModel):
             labels = labels.masked_fill(inputs["attention_mask"] == 0, -100)
 
         self.model.eval()
-        with self.torch.no_grad():
+        with torch.no_grad():
             outputs = self.model(**inputs, labels=labels)
 
         logits = outputs.logits[:, :-1, :]
         target_labels = labels[:, 1:]
-        log_probs = self.functional.log_softmax(logits, dim=-1)
+        log_probs = F.log_softmax(logits, dim=-1)
         mask = target_labels != -100
         safe_targets = target_labels.masked_fill(~mask, 0)
         token_log_probs = log_probs.gather(-1, safe_targets.unsqueeze(-1)).squeeze(-1)
@@ -264,10 +249,9 @@ class TopReward(ProgressModel):
 
         num_frames = frames_array.shape[0]
         if num_frames > self.max_frames:
-            raise ValueError(
-                f"TOPReward received {num_frames} frames but max_frames={self.max_frames}; "
-                "set sampling.max_frames so Stage 1 and Stage 2 remain aligned"
-            )
+            indices = np.linspace(0, num_frames - 1, self.max_frames, dtype=int)
+            frames_array = frames_array[indices]
+            num_frames = frames_array.shape[0]
 
         frames = _frames_array_to_pil_list(frames_array)
         result = self._compute_instruction_rewards_for_prefixes(frames, task_description or "Complete the task.")
@@ -284,82 +268,4 @@ class TopReward(ProgressModel):
         progress = np.interp(frame_indices, lengths, values)
         return np.clip(progress.astype(np.float64), 0.0, 1.0)
 
-    @staticmethod
-    def _true_logprob(response: dict[str, Any]) -> float:
-        try:
-            positions = response["choices"][0]["logprobs"]["content"]
-        except (KeyError, IndexError, TypeError) as exc:
-            raise RemoteError("TOPReward response is missing choices[0].logprobs.content") from exc
-        for position in positions:
-            candidates = [position, *(position.get("top_logprobs") or [])]
-            matches = [
-                candidate
-                for candidate in candidates
-                if isinstance(candidate, dict) and str(candidate.get("token", "")).strip().lower() == "true"
-            ]
-            if matches:
-                try:
-                    return max(float(candidate["logprob"]) for candidate in matches)
-                except (KeyError, TypeError, ValueError) as exc:
-                    raise RemoteError("TOPReward True candidate has no numeric logprob") from exc
-        raise RemoteError("TOPReward top_logprobs did not contain True or ' True'")
 
-    @classmethod
-    def remote_compute_progress(
-        cls,
-        frames_array: np.ndarray,
-        task_description: str,
-        reference_video_path: str | None,
-        remote: RemoteContext,
-        options: dict,
-    ) -> ProgressResult:
-        num_frames = len(frames_array)
-        if num_frames == 0:
-            return ProgressResult(np.array([], dtype=np.float64), raw_response=[])
-        scoring = str(options.get("scoring", "remote_top_logprobs"))
-        if scoring == "exact_logits":
-            raise ValueError("TOPReward scoring=exact_logits is only available in local mode")
-        configured_samples = options.get("num_prefix_samples", 15)
-        if not isinstance(configured_samples, int) or isinstance(configured_samples, bool) or configured_samples < 1:
-            raise ValueError("TOPReward options.num_prefix_samples must be a positive integer")
-        if num_frames > 2:
-            count = min(configured_samples, num_frames)
-            prefix_lengths = sorted({int(value) for value in np.linspace(1, num_frames, count, dtype=int)})
-        else:
-            prefix_lengths = [num_frames]
-
-        task = task_description or "Complete the task."
-        prompt = (
-            "The supplied frames show a robot manipulation trajectory that completes the following task: "
-            f"{task} Decide whether the preceding statement is True or False. Answer with exactly True or False."
-        )
-        rewards: list[float] = []
-        raw_responses = []
-        for length in prefix_lengths:
-            content = [{"type": "text", "text": prompt}]
-            content.extend(vision_content(frames_array[:length]))
-            messages = [{"role": "user", "content": content}]
-            last_error = None
-            response = None
-            for parse_attempt in range(remote.config.max_retries + 1):
-                response = remote.completion(
-                    messages,
-                    {"temperature": 0, "max_tokens": 1, "logprobs": True, "top_logprobs": 20},
-                )
-                try:
-                    rewards.append(cls._true_logprob(response))
-                    break
-                except RemoteError as exc:
-                    last_error = exc
-                    if parse_attempt >= remote.config.max_retries:
-                        raise RemoteError(f"TOPReward could not obtain True logprob: {last_error}") from exc
-            assert response is not None
-            raw_responses.append({"prefix_length": length, "true_logprob": rewards[-1], "response": response})
-
-        normalized = _normalize_rewards(rewards)
-        values = np.interp(
-            np.arange(1, num_frames + 1, dtype=float),
-            np.asarray(prefix_lengths, dtype=float),
-            normalized,
-        )
-        return ProgressResult(np.clip(values, 0.0, 1.0), raw_response=raw_responses)

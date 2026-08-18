@@ -16,6 +16,7 @@ from prmeval.infer.baselines import (
     SoleR1,
     TopReward,
 )
+from prmeval.infer.baselines.common import interpolate_prefix_values, trajectory_prefix_lengths
 
 
 class _RemoteStub:
@@ -38,15 +39,64 @@ class _RemoteStub:
         return self.completions.pop(0)
 
 
+class TrajectoryPrefixesTest(unittest.TestCase):
+    def test_samples_cumulative_prefixes_and_interpolates_endpoints(self):
+        lengths = trajectory_prefix_lengths(num_frames=4, num_prefix_samples=3)
+
+        self.assertEqual(lengths, [1, 2, 4])
+        self.assertEqual(trajectory_prefix_lengths(num_frames=2, num_prefix_samples=2), [1, 2])
+        self.assertEqual(trajectory_prefix_lengths(num_frames=4, num_prefix_samples=1), [4])
+        np.testing.assert_allclose(
+            interpolate_prefix_values(4, lengths, [0.0, 0.5, 1.0]),
+            [0.0, 0.5, 0.75, 1.0],
+        )
+
+    def test_roboreward_local_wrapper_scores_each_prefix(self):
+        model = RoboReward.__new__(RoboReward)
+        model.num_prefix_samples = 3
+        observed_lengths = []
+
+        def score_prefixes(frames_list, _tasks):
+            observed_lengths.extend(len(frames) for frames in frames_list)
+            endpoint_values = {1: 0.0, 2: 0.5, 3: 0.75, 4: 1.0}
+            return [[endpoint_values[len(frames)]] * len(frames) for frames in frames_list]
+
+        model._compute_progress_batch_without_prefixes = score_prefixes
+        values = model.compute_progress(np.zeros((4, 2, 2, 3), dtype=np.uint8), "task")
+
+        self.assertEqual(observed_lengths, [1, 2, 4])
+        np.testing.assert_allclose(values, [0.0, 0.5, 0.75, 1.0])
+
+        observed_lengths.clear()
+        batched = model.compute_progress_batch(
+            [np.zeros((4, 2, 2, 3)), np.zeros((3, 2, 2, 3)), np.zeros((0, 2, 2, 3))],
+            ["first", "second", "empty"],
+        )
+
+        self.assertEqual(observed_lengths, [1, 2, 4, 1, 2, 3])
+        np.testing.assert_allclose(batched[0], [0.0, 0.5, 0.75, 1.0])
+        np.testing.assert_allclose(batched[1], [0.0, 0.5, 0.75])
+
+
+        self.assertEqual(batched[2], [])
 class BaselineRemoteTest(unittest.TestCase):
     def setUp(self):
         self.frames = np.zeros((4, 2, 2, 3), dtype=np.uint8)
 
-    def test_roboreward_remote_score_mapping(self):
-        remote = _RemoteStub(chats=[{"score": 4}])
-        result = RoboReward.remote_compute_progress(self.frames, "task", None, remote, {})
-        self.assertEqual(result.values.tolist(), [0.75] * 4)
+    def test_roboreward_remote_scores_prefixes_and_interpolates(self):
+        remote = _RemoteStub(chats=[{"score": 1}, {"score": 3}, {"score": 4}])
+        result = RoboReward.remote_compute_progress(
+            self.frames,
+            "task",
+            None,
+            remote,
+            {"num_prefix_samples": 3},
+        )
+        np.testing.assert_allclose(result.values, [0.0, 0.5, 0.625, 0.75])
+        self.assertEqual([item["prefix_length"] for item in result.raw_response], [1, 2, 4])
+        self.assertEqual([item["score"] for item in result.raw_response], [1, 3, 4])
         self.assertEqual(remote.chat_calls[0][1]["name"], "roboreward_score")
+        self.assertEqual([len(call[0][0]["content"]) // 2 for call in remote.chat_calls], [1, 2, 4])
 
     def test_sole_r1_remote_carries_progress_across_stage_one_frames(self):
         frames = np.stack([np.full((2, 2, 3), value, dtype=np.uint8) for value in (0, 64, 128)])

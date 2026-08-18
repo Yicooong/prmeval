@@ -23,16 +23,45 @@ Downloading the model:
     model_path = download_vlac_model(local_dir="./models/vlac")
 """
 
-import logging
 import os
 import tempfile
 from typing import List, Dict, Optional
 import numpy as np
+import cv2
 
-from ..base import RemoteError, vision_content
-from ..model import ProgressModel, ProgressResult, RemoteContext
 
-logger = logging.getLogger(__name__)
+
+# Disable tqdm globally before importing evo_vlac to prevent progress bars
+try:
+    import tqdm
+
+    # Monkey-patch tqdm to always disable before evo_vlac imports it
+    _original_tqdm = tqdm.tqdm
+
+    def _disabled_tqdm(*args, **kwargs):
+        kwargs["disable"] = True
+        return _original_tqdm(*args, **kwargs)
+
+    tqdm.tqdm = _disabled_tqdm
+except ImportError:
+    pass  # tqdm not available, nothing to patch
+
+try:
+    from evo_vlac import GAC_model
+    from evo_vlac.utils.video_tool import compress_video
+
+    VLAC_AVAILABLE = True
+except ImportError:
+    VLAC_AVAILABLE = False
+
+try:
+    from huggingface_hub import snapshot_download
+
+    HF_AVAILABLE = True
+except ImportError:
+    HF_AVAILABLE = False
+
+logger = get_logger()
 
 
 def download_vlac_model(
@@ -53,12 +82,8 @@ def download_vlac_model(
         >>> model_path = download_vlac_model()
         >>> model_path = download_vlac_model(local_dir="./models/vlac")
     """
-    try:
-        from huggingface_hub import snapshot_download
-    except ImportError as exc:
-        raise ImportError(
-            "huggingface_hub is required to download models. Install with: pip install huggingface_hub"
-        ) from exc
+    if not HF_AVAILABLE:
+        raise ImportError("huggingface_hub is required to download models. Install with: pip install huggingface_hub")
 
     print(f"Downloading VLAC model from {repo_id}...")
     model_path = snapshot_download(
@@ -71,15 +96,13 @@ def download_vlac_model(
     return model_path
 
 
-class VLAC(ProgressModel):
+class VLAC:
     """VLAC baseline for progress prediction using pair-wise comparison.
 
     VLAC uses a pair-wise comparison mechanism to predict task progress
     for each frame in a trajectory. It requires a local model checkpoint
     to be loaded.
     """
-
-    supports_remote = True
 
     def __init__(
         self,
@@ -94,15 +117,6 @@ class VLAC(ProgressModel):
         auto_download: bool = True,
         use_images: bool = False,
     ):
-        try:
-            import cv2
-            from evo_vlac import GAC_model
-            from evo_vlac.utils.video_tool import compress_video
-        except ImportError as exc:
-            raise RuntimeError("VLAC local inference requires OpenCV and evo_vlac") from exc
-
-        self.cv2 = cv2
-        self.compress_video = compress_video
         """
         Initialize VLAC model.
 
@@ -134,6 +148,10 @@ class VLAC(ProgressModel):
             )
 
             if is_hf_repo_id and auto_download:
+                if not HF_AVAILABLE:
+                    raise ImportError(
+                        "huggingface_hub is required to download models. Install with: pip install huggingface_hub"
+                    )
                 print(f"Model path '{model_path}' not found locally. Downloading from Hugging Face...")
                 model_path = download_vlac_model(repo_id=model_path)
             elif not is_hf_repo_id:
@@ -191,15 +209,15 @@ class VLAC(ProgressModel):
                     # Save frame as image
                     image_path = os.path.join(tmpdir, f"frame_{i:05d}.jpg")
                     # Convert RGB to BGR for OpenCV
-                    frame_bgr = self.cv2.cvtColor(frame, self.cv2.COLOR_RGB2BGR)
-                    self.cv2.imwrite(image_path, frame_bgr)
+                    frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                    cv2.imwrite(image_path, frame_bgr)
                     image_list.append(image_path)
 
                 # Handle reference images if provided
                 ref_image_list = []
                 if reference_video_path:
                     # Load reference video frames
-                    ref_cap = self.cv2.VideoCapture(reference_video_path)
+                    ref_cap = cv2.VideoCapture(reference_video_path)
                     ref_idx = 0
                     while True:
                         ret, frame = ref_cap.read()
@@ -207,7 +225,7 @@ class VLAC(ProgressModel):
                             break
                         # Save reference frame
                         ref_image_path = os.path.join(tmpdir, f"ref_frame_{ref_idx:05d}.jpg")
-                        self.cv2.imwrite(ref_image_path, frame)
+                        cv2.imwrite(ref_image_path, frame)
                         ref_image_list.append(ref_image_path)
                         ref_idx += 1
                     ref_cap.release()
@@ -230,17 +248,17 @@ class VLAC(ProgressModel):
 
                 # Compress video (VLAC expects compressed video)
                 compressed_video = os.path.join(tmpdir, "compressed.mp4")
-                _, output_fps = self.compress_video(video_path, compressed_video, fps=1.0)
+                _, output_fps = compress_video(video_path, compressed_video, fps=1.0)
 
                 # Verify compressed video shape matches original frames
-                cap = self.cv2.VideoCapture(compressed_video)
+                cap = cv2.VideoCapture(compressed_video)
                 compressed_frames = []
                 while True:
                     ret, frame = cap.read()
                     if not ret:
                         break
                     # Convert BGR to RGB for consistency
-                    frame_rgb = self.cv2.cvtColor(frame, self.cv2.COLOR_BGR2RGB)
+                    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                     compressed_frames.append(frame_rgb)
                 cap.release()
                 compressed_frames_array = np.array(compressed_frames)  # [T, H, W, C] in RGB
@@ -304,61 +322,15 @@ class VLAC(ProgressModel):
     def _frames_to_video(self, frames_array: np.ndarray, output_path: str, fps: float = 5.0):
         """Convert frames array to video file."""
         height, width = frames_array.shape[1], frames_array.shape[2]
-        fourcc = self.cv2.VideoWriter_fourcc(*"mp4v")
-        out = self.cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
 
         for frame in frames_array:
             # Ensure frame is uint8
             if frame.dtype != np.uint8:
                 frame = np.clip(frame, 0, 255).astype(np.uint8)
             # Convert RGB to BGR for OpenCV
-            frame_bgr = self.cv2.cvtColor(frame, self.cv2.COLOR_RGB2BGR)
+            frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
             out.write(frame_bgr)
 
         out.release()
-
-    @classmethod
-    def remote_compute_progress(
-        cls,
-        frames_array: np.ndarray,
-        task_description: str,
-        reference_video_path: str | None,
-        remote: RemoteContext,
-        options: dict,
-    ) -> ProgressResult:
-        if len(frames_array) == 0:
-            return ProgressResult([], raw_response=None)
-        prompt = (
-            "Act as the VLAC pair-wise trajectory critic. Evaluate the ordered robot trajectory for the task "
-            f"'{task_description}' and return the critic progress values in frame order. Values may use either "
-            "the [0,1] rich-value scale or percentage scale [0,100]."
-        )
-        content = [{"type": "text", "text": prompt}]
-        content.extend(vision_content(frames_array))
-        schema = {
-            "name": "vlac_progress",
-            "strict": True,
-            "schema": {
-                "type": "object",
-                "properties": {
-                    "progress": {
-                        "type": "array",
-                        "minItems": 1,
-                        "items": {"type": "number", "minimum": 0, "maximum": 100},
-                    }
-                },
-                "required": ["progress"],
-                "additionalProperties": False,
-            },
-        }
-        parsed, raw = remote.chat([{"role": "user", "content": content}], schema)
-        values = [float(value) for value in parsed["progress"]]
-        if max(values) > 1.0:
-            values = [value / 100.0 for value in values]
-        if any(not 0 <= value <= 1 for value in values):
-            raise RemoteError(f"VLAC returned values outside [0,1]: {values}")
-        if len(values) < len(frames_array):
-            values.extend([values[-1]] * (len(frames_array) - len(values)))
-        elif len(values) > len(frames_array):
-            values = values[: len(frames_array)]
-        return ProgressResult(values, raw_response=raw)

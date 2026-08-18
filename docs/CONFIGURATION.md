@@ -102,12 +102,15 @@ resume: false
 |---|---|---|
 | `progress_test` | 完整有序轨迹单次请求，使用严格 JSON Schema | 与输入严格等长的 `[0,1]` progress curve |
 | `gvl` | 按任务和帧数固定乱序的全部查询帧，单次请求 | 逐帧 0–100 百分比恢复原序后除以 100 |
-| `roboreward` | 完整轨迹单次请求 | 1–5 分数映射为 `(score - 1) / 4` 并复制到全部帧 |
+| `roboreward` | 每个选中 trajectory prefix 一次请求 | 各 prefix 的 1–5 分数映射为 `(score - 1) / 4`，再插值到全部帧 |
 | `robodopamine` | 每个选中 transition 一次 8 图请求 | 按 incremental/forward/backward 公式累积 |
 | `sole_r1` | 首帧固定为 0；随后逐帧发送首帧、上一帧和当前帧，并递推上一预测 | 解析 `<answer>` 百分比后除以 100 |
 | `topreward` | 每个选中 trajectory prefix 一次请求 | True logprob 归一化并插值到全部帧 |
 | `vlac` | 完整有序轨迹单次请求 | critic value 归一化，并按末值补齐或截断 |
 | `rbm` / `rewind` | 完整有序轨迹单次请求 | 与输入严格等长的 `[0,1]` progress curve |
+
+`roboreward` 和 `topreward` 都可通过 `options.num_prefix_samples` 设置累计 trajectory prefix 数量，默认值为
+15。RoboReward 保留 1–5 分数的绝对尺度，不会对同一轨迹的分数再次做 min-max 归一化。
 
 `robodopamine` 支持以下 `options`：
 
@@ -120,8 +123,8 @@ infer:
     frame_interval: 1       # 正整数，默认逐帧 transition
 ```
 
-`topreward` 可通过 `options.num_prefix_samples` 设置 prefix 数量，默认值为 15。对应的 OpenAI-compatible
-服务必须支持请求参数 `logprobs: true`、`top_logprobs: 20`，并保证返回的生成 token 或候选 token 中包含
+`topreward` 对应的 OpenAI-compatible 服务必须支持请求参数 `logprobs: true`、`top_logprobs: 20`，并保证
+返回的生成 token 或候选 token 中包含
 `True` 或带前导空格的 ` True`；否则该样本会严格失败并写入 `errors.jsonl`。
 
 模型的帧数限制统一由 `sampling.max_frames` 控制。Infer 不会再次抽帧，以免 prediction、输入帧和 target

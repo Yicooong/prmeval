@@ -1,21 +1,16 @@
+import cv2
 import base64
-import hashlib
 import random
 import re
+import requests
 import json
 import os
 import time
 from typing import List, Dict, Optional
 import numpy as np
 
-from ..base import RemoteError, vision_content
-from ..model import ProgressModel, ProgressResult, RemoteContext
 
-
-class GVL(ProgressModel):
-    supports_local = False
-    supports_remote = True
-
+class GVL:
     def __init__(
         self,
         api_key: str = None,
@@ -38,14 +33,6 @@ class GVL(ProgressModel):
         :param base_delay:       Base delay in seconds for exponential backoff
         :param max_delay:        Maximum delay in seconds between retries
         """
-        try:
-            import cv2
-            import requests
-        except ImportError as exc:
-            raise RuntimeError("Legacy GVL direct API mode requires OpenCV and requests") from exc
-
-        self.cv2 = cv2
-        self.requests = requests
         self.provider = provider.lower()
         if self.provider not in ["gemini", "openai"]:
             raise ValueError(f"Unsupported provider: {provider}. Must be 'gemini' or 'openai'")
@@ -135,7 +122,7 @@ class GVL(ProgressModel):
         temp_frames_info = []
         for idx in temp_indices:
             frame = frames_array[idx]  # shape = (H, W, 3)
-            ret, buffer = self.cv2.imencode(".jpg", frame)
+            ret, buffer = cv2.imencode(".jpg", frame)
             if not ret:
                 continue
 
@@ -218,7 +205,7 @@ class GVL(ProgressModel):
         for attempt in range(self.max_retries + 1):
             try:
                 full_text = ""
-                with self.requests.post(url, headers=headers, json=body, stream=True) as resp:
+                with requests.post(url, headers=headers, json=body, stream=True) as resp:
                     # Check for throttling or server errors
                     if resp.status_code == 429 or resp.status_code >= 500:
                         delay = min(self.base_delay * (2**attempt), self.max_delay)
@@ -251,7 +238,7 @@ class GVL(ProgressModel):
 
                 return full_text
 
-            except self.requests.exceptions.RequestException as e:
+            except requests.exceptions.RequestException as e:
                 last_exception = e
                 delay = min(self.base_delay * (2**attempt), self.max_delay)
                 print(
@@ -298,7 +285,7 @@ class GVL(ProgressModel):
         for attempt in range(self.max_retries + 1):
             try:
                 full_text = ""
-                with self.requests.post(url, headers=headers, json=body, stream=True) as resp:
+                with requests.post(url, headers=headers, json=body, stream=True) as resp:
                     # Check for throttling or server errors
                     if resp.status_code == 429 or resp.status_code >= 500:
                         delay = min(self.base_delay * (2**attempt), self.max_delay)
@@ -330,7 +317,7 @@ class GVL(ProgressModel):
 
                 return full_text
 
-            except self.requests.exceptions.RequestException as e:
+            except requests.exceptions.RequestException as e:
                 last_exception = e
                 delay = min(self.base_delay * (2**attempt), self.max_delay)
                 print(
@@ -457,87 +444,3 @@ class GVL(ProgressModel):
                 task_completion_list.append(normalized)
         print("Task completion list:", task_completion_list)
         return task_completion_list
-
-    @classmethod
-    def remote_compute_progress(
-        cls,
-        frames_array: np.ndarray,
-        task_description: str,
-        reference_video_path: str | None,
-        remote: RemoteContext,
-        options: dict,
-    ) -> ProgressResult:
-        if len(frames_array) == 0:
-            return ProgressResult([], raw_response=None)
-        order = list(range(len(frames_array)))
-        seed = int(
-            hashlib.sha256(f"{task_description}|{len(frames_array)}".encode()).hexdigest()[:16],
-            16,
-        )
-        random.Random(seed).shuffle(order)
-        prompt = (
-            "You are an expert roboticist tasked to predict task completion percentages for frames of a robot "
-            f"for the task of {task_description}. Task completion percentages are between 0 and 100, where 100 "
-            "is full completion. The query frames are in random order, so judge every frame independently. The "
-            "initial robot scene shown first has 0 percent completion. For every numbered query frame, return its "
-            "frame number, a short visual description, and task completion percentage in the frames field."
-        )
-        content = [{"type": "text", "text": prompt}, {"type": "text", "text": "Initial robot scene:"}]
-        content.extend(vision_content(frames_array[:1], "Initial frame"))
-        content.append({"type": "text", "text": "Randomly ordered query frames:"})
-        content.extend(vision_content([frames_array[index] for index in order]))
-        schema = {
-            "name": "gvl_progress_prediction",
-            "strict": True,
-            "schema": {
-                "type": "object",
-                "properties": {
-                    "frames": {
-                        "type": "array",
-                        "minItems": len(frames_array),
-                        "maxItems": len(frames_array),
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "frame_number": {
-                                    "type": "integer",
-                                    "minimum": 1,
-                                    "maximum": len(frames_array),
-                                },
-                                "frame_description": {"type": "string"},
-                                "task_completion_percentage": {
-                                    "type": "number",
-                                    "minimum": 0,
-                                    "maximum": 100,
-                                },
-                            },
-                            "required": [
-                                "frame_number",
-                                "frame_description",
-                                "task_completion_percentage",
-                            ],
-                            "additionalProperties": False,
-                        },
-                    }
-                },
-                "required": ["frames"],
-                "additionalProperties": False,
-            },
-        }
-        expected_numbers = set(range(1, len(frames_array) + 1))
-
-        def validate_frame_numbers(value: dict) -> None:
-            numbers = [int(item["frame_number"]) for item in value["frames"]]
-            if set(numbers) != expected_numbers or len(numbers) != len(set(numbers)):
-                raise RemoteError("GVL response contains missing or duplicate frame numbers")
-
-        parsed, raw = remote.chat(
-            [{"role": "user", "content": content}],
-            schema,
-            validator=validate_frame_numbers,
-        )
-        by_number = {int(item["frame_number"]): item for item in parsed["frames"]}
-        values = [0.0] * len(frames_array)
-        for presented, original in enumerate(order):
-            values[original] = float(by_number[presented + 1]["task_completion_percentage"]) / 100.0
-        return ProgressResult(values, raw_response=raw)

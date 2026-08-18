@@ -78,6 +78,20 @@ class MyModel(ProgressModel):
 `supports_local_batch` 未开启时配置 `batch_size > 1` 会在模型加载前立即报错，避免把逐条循环误认为 GPU
 batch。不同视频长度可以在模型内部按帧数分桶或拆成 micro-batch；Runner 只负责顶层 sample 分组。
 
+## 标量序列模型生成 dense progress
+
+如果模型接收一段序列但只输出一个标量，可复用 `prmeval.infer.baselines.common` 中的
+`trajectory_prefix_lengths()` 和 `interpolate_prefix_values()`：先按 1-based 累计长度构造 trajectory
+prefixes，分别对每个 prefix 评分，再把端点评分线性插值到每一帧。TOPReward 和 RoboReward 共用这套帧
+对齐逻辑。
+
+归一化策略仍由模型决定：没有固定绝对尺度的 log-likelihood 可先用 `normalize_prefix_values()` 做轨迹内
+min-max；RoboReward 这类带有绝对等级定义的输出应先映射到 `[0,1]`，但不应再次做轨迹内归一化。批量模型
+应先把多个样本的 prefixes 展平评分，再按每个样本的 prefix 计划恢复并插值，避免逐样本退化。
+
+prefix 方案只提供采样点之间的估计值，不保证单调。如果指标需要单调进度，应由具体模型明确选择累积最大值
+或 isotonic 等后处理，不能在公共组件中默认修改模型预测。
+
 ## 可选远程方法
 
 远程模式不会构造本地模型实例。将远程方法写成 classmethod，并复用 `RemoteContext` 的认证、重试、图片编码

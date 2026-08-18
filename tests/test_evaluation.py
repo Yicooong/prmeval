@@ -539,20 +539,27 @@ infer:
         self.assertEqual(payloads[0]["messages"], payloads[1]["messages"])
         self.assertEqual(payloads[0]["response_format"]["json_schema"]["name"], "gvl_progress_prediction")
 
-    def test_roboreward_maps_discrete_score_to_all_frames(self):
+    def test_roboreward_scores_prefixes_and_interpolates_all_frames(self):
         infer = create_infer(InferConfig(
             name="roboreward", base_url="http://service/v1", model_id="model", max_retries=0
         ))
-        captured = {}
+        payloads = []
+        scores = iter((1, 3, 4))
 
         def mock_post(_url, **kwargs):
-            captured.update(kwargs["json"])
-            return _BodyResponse({"choices": [{"message": {"content": '{"score":4}'}}]})
+            payloads.append(kwargs["json"])
+            score = next(scores)
+            return _BodyResponse({"choices": [{"message": {"content": json.dumps({"score": score})}}]})
 
         with patch("httpx.post", side_effect=mock_post):
             prediction = infer.predict(_make_progress_sample(3))
-        self.assertEqual(prediction.progress, [0.75, 0.75, 0.75])
-        self.assertEqual(sum(item.get("type") == "image_url" for item in captured["messages"][0]["content"]), 3)
+        self.assertEqual(prediction.progress, [0.0, 0.5, 0.75])
+        self.assertEqual([item["prefix_length"] for item in prediction.raw_response], [1, 2, 3])
+        image_counts = [
+            sum(item.get("type") == "image_url" for item in payload["messages"][0]["content"])
+            for payload in payloads
+        ]
+        self.assertEqual(image_counts, [1, 2, 3])
 
     def test_robodopamine_incremental_protocol_and_padding(self):
         infer = create_infer(InferConfig(
