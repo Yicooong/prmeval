@@ -424,7 +424,7 @@ infer:
 
     def test_progress_test_infer_uses_default_prompt_and_exact_schema(self):
         infer = create_infer(InferConfig(
-            name="progress_test", transport="openai_chat", base_url="http://service/v1",
+            name="progress_test", mode="remote", base_url="http://service/v1",
             model_id="test-vlm", max_retries=0,
         ))
         sample = ProgressSample(
@@ -457,15 +457,23 @@ infer:
         self.assertEqual(progress_definition["minItems"], 3)
         self.assertEqual(progress_definition["maxItems"], 3)
 
-    def test_progress_baselines_use_openai_chat_transport(self):
+    def test_remote_progress_baselines_use_openai_chat_transport(self):
         for name in ("gvl", "roboreward", "robodopamine", "topreward", "vlac", "rbm", "rewind"):
             infer = create_infer(InferConfig(
-                name=name, transport="openai_chat", base_url="http://service/v1", model_id="model"
+                name=name, mode="remote", base_url="http://service/v1", model_id="model"
             ))
             self.assertEqual(infer.transport, "openai_chat")
             self.assertEqual(infer.capabilities, {"progress"})
-        with self.assertRaises(ValueError):
-            InferConfig(name="rbm", transport="specialized", base_url="http://service/v1", model_id="model")
+
+    def test_infer_config_rejects_removed_transport_field(self):
+        with self.assertRaisesRegex(ValueError, "transport"):
+            InferConfig(
+                name="rbm",
+                mode="remote",
+                transport="openai_chat",
+                base_url="http://service/v1",
+                model_id="model",
+            )
 
     def test_gvl_deterministic_shuffle_and_percentage_mapping(self):
         sample = _make_progress_sample(sample_id="stable-gvl-sample")

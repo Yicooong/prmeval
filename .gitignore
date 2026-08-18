@@ -32,7 +32,7 @@ baseline_eval_output/
 unsloth_compiled_cache/
 venv_robodopamine.txt
 examples/
-
+configs/eval
 # Editor and operating-system temporary files
 .DS_Store
 *.swp

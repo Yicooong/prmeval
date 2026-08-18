@@ -39,6 +39,6 @@ def create_infer(config: InferConfig):
     if config.max_concurrency > 1 and not infer_cls.thread_safe_mode(str(config.mode)):
         raise ValueError(f"Infer '{config.name}' is not thread-safe; use infer.max_concurrency=1")
     infer = infer_cls(config)
-    if config.transport and infer.transport != config.transport:
+    if infer.transport != config.transport:
         raise ValueError(f"Infer '{config.name}' uses transport '{infer.transport}', not '{config.transport}'")
     return infer

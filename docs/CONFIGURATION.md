@@ -20,7 +20,6 @@ sampling:
 infer:
   name: progress_test
   mode: remote
-  transport: openai_chat
   base_url: BASE_URL
   api_key: OPENAI_API_KEY
   model_id: MODEL_ID
@@ -75,8 +74,7 @@ resume: false
 | 字段 | 说明 |
 |---|---|
 | `name` | 已注册的 infer 名称；通过 `python -m prmeval.cli list-infers` 查看 |
-| `mode` | `local` 或 `remote`；省略时根据 `model_path`/`base_url` 自动判断 |
-| `transport` | local 使用 `local_huggingface`，remote 使用 `openai_chat`；通常可省略 |
+| `mode` | `local` 或 `remote`；分别使用 `local_huggingface` 和 `openai_chat`，省略时根据 `model_path`/`base_url` 自动判断 |
 | `model_path` | local 模式必填；Hugging Face ID 或本地 checkpoint 路径，也可以是环境变量名 |
 | `base_url` | remote 模式必填；服务地址或保存服务地址的环境变量名 |
 | `api_key` | API Key 或保存 Key 的环境变量名；服务无需认证时可省略 |
@@ -115,7 +113,7 @@ resume: false
 ```yaml
 infer:
   name: robodopamine
-  transport: openai_chat
+  mode: remote
   options:
     eval_mode: incremental  # incremental、forward 或 backward
     frame_interval: 1       # 正整数，默认逐帧 transition

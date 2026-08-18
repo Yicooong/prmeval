@@ -35,7 +35,6 @@ class InferConfig(BaseModel):
 
     name: str
     mode: Literal["local", "remote"] | None = None
-    transport: Literal["openai_chat", "local_huggingface"] | None = None
     base_url: str | None = None
     api_key: str | None = None
     model_id: str | None = None
@@ -58,7 +57,7 @@ class InferConfig(BaseModel):
         resolved = dict(data)
         mode = resolved.get("mode")
         if mode is None:
-            mode = "remote" if resolved.get("base_url") or resolved.get("transport") == "openai_chat" else "local"
+            mode = "remote" if resolved.get("base_url") else "local"
             resolved["mode"] = mode
         if "max_concurrency" not in resolved and mode == "local":
             resolved["max_concurrency"] = 1
@@ -77,21 +76,20 @@ class InferConfig(BaseModel):
         if self.mode == "local":
             if not self.model_path:
                 raise ValueError("Local inference requires infer.model_path")
-            if self.transport not in (None, "local_huggingface"):
-                raise ValueError("Local inference uses transport 'local_huggingface'")
             if self.max_concurrency != 1:
                 raise ValueError("Local inference requires infer.max_concurrency=1")
-            self.transport = "local_huggingface"
             self.model_id = self.model_id or self.model_path
         else:
             if not self.base_url:
                 raise ValueError("Remote inference requires infer.base_url")
             if not self.model_id:
                 raise ValueError("Remote inference requires infer.model_id")
-            if self.transport not in (None, "openai_chat"):
-                raise ValueError("Remote inference uses transport 'openai_chat'")
-            self.transport = "openai_chat"
         return self
+
+    @property
+    def transport(self) -> Literal["openai_chat", "local_huggingface"]:
+        """Return the transport implied by the configured inference mode."""
+        return "local_huggingface" if self.mode == "local" else "openai_chat"
 
 
 class EvalConfig(BaseModel):

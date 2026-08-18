@@ -47,7 +47,6 @@ class RemotePipelineTest(unittest.TestCase):
                     infer=InferConfig(
                         name="progress_test",
                         mode="remote",
-                        transport="openai_chat",
                         base_url=f"http://127.0.0.1:{server.server_port}/v1",
                         model_id="contract-vlm",
                         max_retries=0,

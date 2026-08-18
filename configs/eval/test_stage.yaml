@@ -10,7 +10,7 @@ sampling:
 
 infer:
   name: progress_test
-  transport: openai_chat
+  mode: remote
   base_url: BASE_URL
   api_key: OPENAI_API_KEY
   model_id: MODEL_ID
