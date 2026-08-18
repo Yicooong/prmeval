@@ -71,39 +71,25 @@ python -m prmeval.cli validate-samples \
   --samples evaluation_output/jsonl-progress-full-smoke/samples.jsonl
 ```
 
-## Stage 2：本地或远程推理
+## Stage 2：单入口模型推理
 
-Stage 2 只接收 `EvaluationRecord(stage="sampled")`。它加载 NPZ 帧，调用 infer adapter，并在原记录上补充：
-
-```text
-infer
-prediction
-execution
-stage = inferred
-```
-
-模型只使用 `input.task`、`input.items[].frames` 和 input metadata；`target` 不会传入本地模型或发送给远程服务。`sample_id`、`evaluation`、`input` 和 `target` 在推理过程中不得改变。
-
-运行器通过 `prmeval.infer.create_infer()` 从 registry 构造模型。实现按模型拆分在
-`prmeval/infer/baselines/<name>.py`；local-first 模型通过 `infer/model.py` 接入，远程网络请求复用
-`infer/base.py` 和 `infer/openai.py`：
+Stage 2 只接收 `EvaluationRecord(stage="sampled")`。它加载 NPZ 帧，通过 registry 直接构造具体 baseline，并按样本顺序调用统一的 `predict()`：
 
 ```text
 Evaluator.infer()
-    -> prmeval.infer.create_infer(config)
-    -> records 按 infer.batch_size 分组
-    -> infer.predict_batch(samples)
-    -> local: model.compute_progress_batch(...)
-       remote: model.remote_compute_progress(...) 或旧 remote adapter
+    -> infer_cls = INFERS.get(config.infer.name)
+    -> infer = infer_cls(config.infer)
+    -> record_to_sample(record, bundle_dir)
+    -> infer.predict(sample)
     -> ProgressPrediction / PreferencePrediction
     -> EvaluationRecord(stage="inferred")
 ```
 
-Runner 的一个线程池任务处理一个 batch。local 使用 `batch_size=N, max_concurrency=1`，通过一次模型调用提高
-GPU 利用率；remote 通常使用 `batch_size=1, max_concurrency=N`，通过多线程隐藏网络等待。Runner 不理解
-模型内部的 trajectory prefix、prompt、processor 或 logits 逻辑。
+只有一个抽象父类 `Infer`。框架不区分 local 和 remote，也不提供 adapter、公共 batch、线程池或执行模式分派。checkpoint 加载、provider SDK 和 HTTP 调用均由具体 baseline 自己处理。Runner 只理解 `capabilities` 与标准 Prediction。
 
-标准化后的结果示例：
+Progress baseline 的 `predict()` 校验 `ProgressSample`，把 frames、task 和可选 reference path 传给本类 `compute_progress()`，再通过共享函数构造 `ProgressPrediction`。共享校验要求输出一维、与输入帧等长、有限并位于 `[0,1]`。RLVLMF 是当前唯一 preference baseline，其 `predict()` 调用 `compute_preference()` 并构造 `PreferencePrediction`。
+
+标准化结果示例：
 
 ```json
 {
@@ -113,33 +99,15 @@ GPU 利用率；remote 通常使用 `batch_size=1, max_concurrency=N`，通过�
 }
 ```
 
-成功结果写入 `predictions.jsonl`，失败结果写入 `errors.jsonl`。progress 输出数量与输入帧数不一致时，该样本会被记录为失败。
+成功结果写入 `predictions.jsonl`；失败结果写入 `errors.jsonl`。单个 sample 失败不会中断或污染其他样本。成功的 progress prediction 不保存远程 raw response；远程失败可通过 `RemoteError.raw_response` 写入错误记录。
 
-### Infer 协议
+`progress_test` 和 SOLE-R1 在模型实例内部组合 `OpenAIChatClient`，但对 Runner 只暴露普通 `predict()`/`compute_progress()`。模型内部确实需要的 prefix 或 tensor micro-batch 是私有实现细节，不参与 Runner 调度。
 
-local-first progress 模型实现 `compute_progress()`；原生 batch 模型再实现 `compute_progress_batch()`；需要远程
-能力时可在同一个模型类中增加 `remote_compute_progress()`。框架只在 adapter 入口分发一次 local/remote，
-模型的共享 prompt、解析和归一化逻辑无需复制。接口和注册示例见 [本地优先模型接入](LOCAL_MODELS.md)。
+Stage 2 不会重新抽帧。模型允许的最大帧数应通过 Stage 1 的 `sampling.max_frames` 设置，使模型输入、target 和 progress prediction 始终一一对应。接口与注册示例见 [Infer 模型接入](INFER_MODELS.md)，连接和模型字段见 [配置文件说明](CONFIGURATION.md#infer)。
 
-`progress_test` 用于联调通用 OpenAI-compatible 模型，只支持 progress 样本。它调用 `POST /v1/chat/completions`，以 Base64 多图片 `image_url` 发送帧，并通过 JSON Schema 约束返回等长的 progress 数组：
-
-```json
-{"progress": [0.0, 0.5, 1.0]}
-```
-
-GVL、RL-VLM-F、RoboReward、RoboDopamine、TOPReward、VLAC、RBM 和 ReWiND 都使用 OpenAI-compatible
-`POST /v1/chat/completions`。其中 TOPReward 还要求服务支持 `logprobs` 和 `top_logprobs`，并在生成 token
-或候选 token 中返回 `True` 的原始 logprob。
-
-Stage 2 不会对帧重新采样。模型允许的最大帧数应通过 Stage 1 的 `sampling.max_frames` 设置，使发送给模型的
-帧、target progress 和返回曲线始终一一对应。
-
-服务地址、认证、模型、并发和 prompt 配置见 [配置文件说明](CONFIGURATION.md#infer)。
-
-可以启动本地 contract mock 或查看已注册 infer：
+查看已注册 infer：
 
 ```bash
-python -m prmeval.infer.mock_server --port 8765
 python -m prmeval.cli list-infers
 ```
 

@@ -148,7 +148,7 @@ Preference 类样本通常包含 `chosen` 和 `rejected` 两个 item，各自拥
   "prediction": {
     "kind": "progress",
     "values": [0.0, 0.5, 1.0],
-    "data": {"raw_response": {}}
+    "data": {"raw_response": null}
   },
   "execution": {
     "status": "success",
@@ -159,7 +159,7 @@ Preference 类样本通常包含 `chosen` 和 `rejected` 两个 item，各自拥
 }
 ```
 
-推理先按 `infer.batch_size` 分组，再通过最多 `infer.max_concurrency` 个线程执行 batch，因此记录写入顺序不保证与 `samples.jsonl` 一致。跨阶段关联应使用 `sample_id`，不能依赖行号。local 模式使用单线程 batch，remote 模式通常使用单样本多线程请求。
+Runner 按 `samples.jsonl` 的待执行记录顺序逐样本调用 `infer.predict()`；写入顺序与本次输入顺序一致。跨阶段关联仍应使用 `sample_id`，不要把行号当作协议主键。
 
 ### `errors.jsonl`
 
@@ -169,7 +169,7 @@ Preference 类样本通常包含 `chosen` 和 `rejected` 两个 item，各自拥
 
 ### `inference_summary.json`
 
-保存 Stage 2 的覆盖率、实际执行模式和输入输出定位：
+保存 Stage 2 的覆盖率和输入输出定位：
 
 ```json
 {
@@ -178,11 +178,6 @@ Preference 类样本通常包含 `chosen` 和 `rejected` 两个 item，各自拥
     "failed": 1,
     "new": 3,
     "skipped": 7
-  },
-  "execution": {
-    "mode": "local",
-    "batch_size": 4,
-    "max_concurrency": 1
   },
   "fingerprint": "<full-config-sha256>",
   "samples": "evaluation_output/example/samples.jsonl",
@@ -334,4 +329,4 @@ python -m prmeval.cli validate-predictions \
 - 重新计算指标只需要 `predictions.jsonl` 和匹配的配置；
 - 审计一次完整运行应保留整个 run 目录，尤其是两个 manifest 和 `errors.jsonl`。
 
-运行目录可能包含模型原始响应、任务文本、数据集元数据、服务地址和错误消息，不应提交到 Git 或发布到不可信位置。框架会脱敏清单中的常见认证字段，但不会自动清理 JSONL 内由 adapter 保存的 `raw_response` 或扩展元数据。
+运行目录可能包含模型原始响应、任务文本、数据集元数据、服务地址和错误消息，不应提交到 Git 或发布到不可信位置。框架会脱敏清单中的常见认证字段。成功的 progress prediction 不保存远程原始响应；错误记录和 preference baseline 的扩展结果仍可能包含服务响应或模型元数据。

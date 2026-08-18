@@ -8,17 +8,20 @@ Reference: https://github.com/TOPReward/TOPReward
 Paper: TOPReward: Token Probabilities as Hidden Zero-Shot Rewards for Robotics (arXiv:2602.19313)
 """
 
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, List, Optional
+from typing import Any, ClassVar
 
 import numpy as np
-import torch
-import torch.nn.functional as F
 from PIL import Image
-from qwen_vl_utils import process_vision_info
-from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
 
+from ...core.config import InferConfig
+from ...core.registry import register_infer
+from ...core.schemas import EvaluationSample, Prediction, ProgressPrediction, ProgressSample
+from ..base import Infer
+
+logger = logging.getLogger(__name__)
 
 
 # Default image size used by TOPReward for video frames
@@ -36,7 +39,7 @@ def _to_pil(frame: np.ndarray) -> Image.Image:
     return Image.fromarray(frame[:, :, :3], "RGB").resize((_TOPREWARD_IMG_SIZE, _TOPREWARD_IMG_SIZE))
 
 
-def _frames_array_to_pil_list(frames_array: np.ndarray) -> List[Image.Image]:
+def _frames_array_to_pil_list(frames_array: np.ndarray) -> list[Image.Image]:
     """Convert (T,H,W,C) or (T,C,H,W) to list of PIL images."""
     T = frames_array.shape[0]
     out = []
@@ -51,9 +54,9 @@ class _InstructionRewardResult:
     reward: float
     reduction: str
     token_count: int
-    prefix_lengths: Optional[List[int]] = None
-    prefix_rewards: Optional[List[float]] = None
-    normalized_prefix_rewards: Optional[List[float]] = None
+    prefix_lengths: list[int] | None = None
+    prefix_rewards: list[float] | None = None
+    normalized_prefix_rewards: list[float] | None = None
 
 
 def _normalize_rewards(rewards: Sequence[float], method: str = "minmax") -> np.ndarray:
@@ -71,10 +74,26 @@ def _normalize_rewards(rewards: Sequence[float], method: str = "minmax") -> np.n
     raise ValueError(f"Unknown normalization method: {method}")
 
 
-class TopReward:
+@register_infer("topreward")
+class TopReward(Infer):
+    capabilities: ClassVar[set[str]] = {"progress"}
     """TOPReward baseline: instruction-conditioned log-likelihood progress from a video VLM."""
 
-    def __init__(
+    def __init__(self, config: InferConfig):
+        super().__init__(config)
+        if not config.model_path:
+            raise ValueError("topreward requires infer.model_path")
+        options = config.options
+        self._initialize(
+            model_path=config.model_path,
+            max_frames=int(options.get("max_frames", 64)),
+            num_prefix_samples=int(options.get("num_prefix_samples", 15)),
+            reduction=str(options.get("reduction", "mean")),
+            add_chat_template=bool(options.get("add_chat_template", True)),
+            fps=float(options.get("fps", 2.0)),
+        )
+
+    def _initialize(
         self,
         model_path: str = "Qwen/Qwen3-VL-8B-Instruct",
         max_frames: int = 64,
@@ -93,6 +112,15 @@ class TopReward:
             add_chat_template: Whether to use chat template for instruction prompt.
             fps: Frames per second for video input to the VLM.
         """
+        global torch, F, process_vision_info, AutoProcessor, Qwen3VLForConditionalGeneration
+        try:
+            import torch
+            import torch.nn.functional as F
+            from qwen_vl_utils import process_vision_info
+            from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
+        except ImportError as exc:
+            raise RuntimeError("TopReward requires torch, transformers, and qwen-vl-utils") from exc
+
         self.model_path = model_path
         self.max_frames = max_frames
         self.num_prefix_samples = num_prefix_samples
@@ -118,19 +146,15 @@ class TopReward:
 
     def _compute_instruction_reward(
         self,
-        frames: List[Image.Image],
+        frames: list[Image.Image],
         instruction: str,
     ) -> float:
         """Compute log-likelihood reward for instruction given video (single trajectory)."""
-        prompt_text = (
-            "The above video shows a robot manipulation trajectory that completes the following task: "
-        )
+        prompt_text = "The above video shows a robot manipulation trajectory that completes the following task: "
         eos_token = self.processor.tokenizer.eos_token
 
         if self.add_chat_template:
-            instruction_suffix = (
-                f"{instruction} Decide whether the above statement is True or not. The answer is:"
-            )
+            instruction_suffix = f"{instruction} Decide whether the above statement is True or not. The answer is:"
             templated_messages = [
                 {
                     "role": "user",
@@ -146,9 +170,7 @@ class TopReward:
             full_text = f"{prompt_chat}True"
             image_inputs, video_inputs = process_vision_info(templated_messages)
         else:
-            instruction_suffix = (
-                f"{instruction} Decide whether the above statement is True or not. The answer is: True"
-            )
+            instruction_suffix = f"{instruction} Decide whether the above statement is True or not. The answer is: True"
             user_messages = [
                 {
                     "role": "user",
@@ -158,9 +180,7 @@ class TopReward:
                     ],
                 }
             ]
-            prompt_chat = self.processor.apply_chat_template(
-                user_messages, tokenize=False, add_generation_prompt=False
-            )
+            prompt_chat = self.processor.apply_chat_template(user_messages, tokenize=False, add_generation_prompt=False)
             if eos_token:
                 prompt_chat = prompt_chat.split(eos_token)[0]
             full_text = f"{prompt_chat}{instruction_suffix}"
@@ -191,16 +211,12 @@ class TopReward:
         safe_targets = target_labels.masked_fill(~mask, 0)
         token_log_probs = log_probs.gather(-1, safe_targets.unsqueeze(-1)).squeeze(-1)
         masked_log_probs = token_log_probs[mask]
-        reward = (
-            masked_log_probs.sum().item()
-            if self.reduction == "sum"
-            else masked_log_probs.mean().item()
-        )
+        reward = masked_log_probs.sum().item() if self.reduction == "sum" else masked_log_probs.mean().item()
         return reward
 
     def _compute_instruction_rewards_for_prefixes(
         self,
-        frames: List[Image.Image],
+        frames: list[Image.Image],
         instruction: str,
     ) -> _InstructionRewardResult:
         """Compute rewards for trajectory prefixes; return normalized curve."""
@@ -208,7 +224,7 @@ class TopReward:
         num_samples = min(self.num_prefix_samples, num_frames)
         if num_frames > 2:
             prefix_lengths = np.linspace(1, num_frames, num_samples, dtype=int)
-            prefix_lengths = sorted(set(int(x) for x in prefix_lengths))
+            prefix_lengths = sorted({int(x) for x in prefix_lengths})
         else:
             prefix_lengths = [num_frames]
 
@@ -231,7 +247,7 @@ class TopReward:
         self,
         frames_array: np.ndarray,
         task_description: str = "",
-        reference_video_path: Optional[str] = None,
+        reference_video_path: str | None = None,
     ) -> np.ndarray:
         """
         Compute progress curve from trajectory frames using TOPReward (log-likelihood of task completion).
@@ -268,4 +284,28 @@ class TopReward:
         progress = np.interp(frame_indices, lengths, values)
         return np.clip(progress.astype(np.float64), 0.0, 1.0)
 
-
+    def predict(self, sample: EvaluationSample) -> Prediction:
+        if not isinstance(sample, ProgressSample):
+            raise TypeError(f"{self.config.name} only supports progress samples")
+        reference_path = sample.trajectory.metadata.get("reference_video_path")
+        values = np.asarray(
+            self.compute_progress(
+                np.asarray(sample.trajectory.frames),
+                sample.trajectory.task,
+                str(reference_path) if reference_path else None,
+            ),
+            dtype=float,
+        ).reshape(-1)
+        expected = len(sample.trajectory.frames)
+        if len(values) != expected:
+            raise ValueError(f"Progress length mismatch: expected {expected}, got {len(values)}")
+        if not np.isfinite(values).all():
+            raise ValueError("Progress values must be finite")
+        if ((values < 0) | (values > 1)).any():
+            raise ValueError("Progress values must be in [0, 1]")
+        return ProgressPrediction(
+            sample_id=sample.sample_id,
+            progress=values.tolist(),
+            model=self.config.model_id or self.config.model_path or self.config.name,
+            model_version=self.config.model_version,
+        )

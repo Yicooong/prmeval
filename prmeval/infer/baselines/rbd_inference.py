@@ -236,20 +236,22 @@ def build_samples_json(
             str(cache_root / "cam_right_wrist" / f"frame_{af:06d}.png"),
         ]
 
-        items.append({
-            "id": f"step-{timestamp_name}-{k:04d}-{bf_id_str}-af_{af:06d}",
-            "task": task,
-            "image": [
-                str(cache_root / "cam_high" / f"frame_{0:06d}.png"),  # 1. Ref Start
-                ref_end_path,  # 2. Ref End
-                bf_images[0],  # 3. Before High
-                bf_images[1],  # 4. Before Left
-                bf_images[2],  # 5. Before Right
-                af_images[0],  # 6. After High
-                af_images[1],  # 7. After Left
-                af_images[2],  # 8. After Right
-            ],
-        })
+        items.append(
+            {
+                "id": f"step-{timestamp_name}-{k:04d}-{bf_id_str}-af_{af:06d}",
+                "task": task,
+                "image": [
+                    str(cache_root / "cam_high" / f"frame_{0:06d}.png"),  # 1. Ref Start
+                    ref_end_path,  # 2. Ref End
+                    bf_images[0],  # 3. Before High
+                    bf_images[1],  # 4. Before Left
+                    bf_images[2],  # 5. Before Right
+                    af_images[0],  # 6. After High
+                    af_images[1],  # 7. After Left
+                    af_images[2],  # 8. After Right
+                ],
+            }
+        )
     return items
 
 

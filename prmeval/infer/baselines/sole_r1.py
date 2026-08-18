@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import math
 import re
-from typing import Any
+from typing import Any, ClassVar
 
 import numpy as np
 
-from ..base import RemoteError, image_data_url
-from ..model import ProgressModel, ProgressResult, RemoteContext
+from ...core.config import InferConfig
+from ...core.registry import register_infer
+from ...core.schemas import EvaluationSample, Prediction, ProgressPrediction, ProgressSample
+from ..base import Infer, RemoteError, image_data_url
+from ..openai import OpenAIChatClient
 
 SYSTEM_PROMPT = (
     "You are an expert roboticist predicting task progress from an ordered sequence of robot observations. "
@@ -22,19 +25,15 @@ ANSWER_RE = re.compile(
 )
 
 
-class SoleR1(ProgressModel):
+@register_infer("sole_r1")
+class SoleR1(Infer):
     """Remote-only SOLE-R1 progress inference over Stage 1 frame sequences."""
 
-    supports_local = False
-    supports_remote = True
+    capabilities: ClassVar[set[str]] = {"progress"}
 
-    def compute_progress(
-        self,
-        frames_array: np.ndarray,
-        task_description: str = "",
-        reference_video_path: str | None = None,
-    ) -> np.ndarray:
-        raise RuntimeError("sole_r1 is remote-only")
+    def __init__(self, config: InferConfig):
+        super().__init__(config)
+        self.client = OpenAIChatClient(config)
 
     @staticmethod
     def _question(task_description: str, previous_progress: float) -> str:
@@ -110,49 +109,65 @@ class SoleR1(ProgressModel):
             raise RemoteError("SOLE-R1 progress must be finite", raw_response=response)
         return value
 
-    @classmethod
-    def remote_compute_progress(
-        cls,
+    def compute_progress(
+        self,
         frames_array: np.ndarray,
-        task_description: str,
-        reference_video_path: str | None,
-        remote: RemoteContext,
-        options: dict[str, Any],
-    ) -> ProgressResult:
-        del reference_video_path, options
+        task_description: str = "",
+        reference_video_path: str | None = None,
+    ) -> np.ndarray:
+        del reference_video_path
         num_frames = len(frames_array)
         if num_frames == 0:
             raise ValueError("SOLE-R1 requires at least one Stage 1 frame")
 
         percentages = [0.0]
-        raw_responses: list[dict[str, Any]] = []
         for frame_index in range(1, num_frames):
             previous_progress = percentages[-1]
-            messages = cls._messages(
+            messages = self._messages(
                 frames_array,
                 frame_index,
                 task_description,
                 previous_progress,
             )
-            response = remote.completion(messages)
-            completion = cls._completion_text(response)
-            progress = cls._parse_progress_percent(completion, response)
+            response = self.client.completion(messages)
+            completion = self._completion_text(response)
+            progress = self._parse_progress_percent(completion, response)
             if not 0 <= progress <= 100:
                 raise RemoteError(
                     f"SOLE-R1 progress {progress:g}% is outside PRMEval's supported 0%-100% range",
                     raw_response=response,
                 )
             percentages.append(progress)
-            raw_responses.append(
-                {
-                    "frame_index": frame_index,
-                    "previous_progress_percent": previous_progress,
-                    "completion": completion,
-                    "response": response,
-                }
-            )
+        return np.asarray(percentages, dtype=np.float64) / 100.0
 
-        return ProgressResult(
-            values=np.asarray(percentages, dtype=np.float64) / 100.0,
-            raw_response=raw_responses,
+    def predict(self, sample: EvaluationSample) -> Prediction:
+        if not isinstance(sample, ProgressSample):
+            raise TypeError(f"{self.config.name} only supports progress samples")
+        reference_path = sample.trajectory.metadata.get("reference_video_path")
+        values = np.asarray(
+            self.compute_progress(
+                np.asarray(sample.trajectory.frames),
+                sample.trajectory.task,
+                str(reference_path) if reference_path else None,
+            ),
+            dtype=float,
+        ).reshape(-1)
+        expected = len(sample.trajectory.frames)
+        if len(values) != expected:
+            raise ValueError(f"Progress length mismatch: expected {expected}, got {len(values)}")
+        if not np.isfinite(values).all():
+            raise ValueError("Progress values must be finite")
+        if ((values < 0) | (values > 1)).any():
+            raise ValueError("Progress values must be in [0, 1]")
+        return ProgressPrediction(
+            sample_id=sample.sample_id,
+            progress=values.tolist(),
+            model=self.config.model_id or self.config.model_path or self.config.name,
+            model_version=self.config.model_version,
         )
+
+    def begin_prediction(self) -> None:
+        self.client.begin_prediction()
+
+    def attempts(self) -> int:
+        return self.client.attempts()

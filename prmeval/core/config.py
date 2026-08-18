@@ -18,9 +18,9 @@ class SamplingConfig(BaseModel):
     eval_types: list[str] = Field(default_factory=lambda: ["reward_alignment"])
     max_frames: int = Field(default=8, ge=1)
     pad_frames: bool = False
-    progress_type: Literal[
-        "absolute_first_frame", "absolute_wrt_total_frames", "relative_first_frame"
-    ] = "absolute_first_frame"
+    progress_type: Literal["absolute_first_frame", "absolute_wrt_total_frames", "relative_first_frame"] = (
+        "absolute_first_frame"
+    )
     random_seed: int = 42
     num_examples_per_quality: int | None = Field(default=5, ge=1)
     num_partial_successes: int | None = Field(default=None, ge=1)
@@ -34,7 +34,6 @@ class InferConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str
-    mode: Literal["local", "remote"] | None = None
     base_url: str | None = None
     api_key: str | None = None
     model_id: str | None = None
@@ -42,8 +41,6 @@ class InferConfig(BaseModel):
     model_version: str | None = None
     timeout_seconds: float = Field(default=120.0, gt=0)
     max_retries: int = Field(default=5, ge=0)
-    max_concurrency: int = Field(default=4, ge=1)
-    batch_size: int = Field(default=1, ge=1)
     temperature: float = 0.0
     max_tokens: int = 1024
     headers: dict[str, str] = Field(default_factory=dict)
@@ -55,12 +52,6 @@ class InferConfig(BaseModel):
         if not isinstance(data, dict):
             return data
         resolved = dict(data)
-        mode = resolved.get("mode")
-        if mode is None:
-            mode = "remote" if resolved.get("base_url") else "local"
-            resolved["mode"] = mode
-        if "max_concurrency" not in resolved and mode == "local":
-            resolved["max_concurrency"] = 1
         for field in ("base_url", "api_key", "model_id", "model_path"):
             value = resolved.get(field)
             if not value:
@@ -70,26 +61,6 @@ class InferConfig(BaseModel):
             elif value.isidentifier() and value.isupper():
                 raise ValueError(f"Environment variable {value!r} configured by infer.{field} is missing")
         return resolved
-
-    @model_validator(mode="after")
-    def validate_mode_fields(self):
-        if self.mode == "local":
-            if not self.model_path:
-                raise ValueError("Local inference requires infer.model_path")
-            if self.max_concurrency != 1:
-                raise ValueError("Local inference requires infer.max_concurrency=1")
-            self.model_id = self.model_id or self.model_path
-        else:
-            if not self.base_url:
-                raise ValueError("Remote inference requires infer.base_url")
-            if not self.model_id:
-                raise ValueError("Remote inference requires infer.model_id")
-        return self
-
-    @property
-    def transport(self) -> Literal["openai_chat", "local_huggingface"]:
-        """Return the transport implied by the configured inference mode."""
-        return "local_huggingface" if self.mode == "local" else "openai_chat"
 
 
 class EvalConfig(BaseModel):
@@ -103,6 +74,6 @@ class EvalConfig(BaseModel):
     resume: bool = True
 
     @classmethod
-    def from_yaml(cls, path: str | Path) -> "EvalConfig":
+    def from_yaml(cls, path: str | Path) -> EvalConfig:
         with Path(path).open(encoding="utf-8") as handle:
             return cls.model_validate(yaml.safe_load(handle))

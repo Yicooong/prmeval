@@ -79,7 +79,7 @@ python -m prmeval.cli list-metrics
 ## 文档
 
 - [配置文件说明](docs/CONFIGURATION.md)
-- [本地优先模型接入](docs/LOCAL_MODELS.md)
+- [Infer 模型接入](docs/INFER_MODELS.md)
 - [三阶段评测流程](docs/PIPELINE.md)
 - [全流程运行产物说明](docs/ARTIFACTS.md)
 - [EvaluationRecord 数据结构](docs/RECORD_SCHEMA.md)
@@ -90,32 +90,29 @@ python -m prmeval.cli list-metrics
 
 ```text
 prmeval/infer/
-├── __init__.py          # 注册加载与 create_infer() 公共入口
-├── base.py              # HTTP、认证、重试、请求计数和图片编码
-├── model.py             # 本地优先 ProgressModel、remote context 与通用 adapter
-├── openai.py            # Chat Completions 与 JSON Schema 校验
-├── mock_server.py       # 本地 OpenAI-compatible contract 服务
+├── __init__.py          # 导入 built-in baselines 并触发注册
+├── base.py              # Infer 抽象类、图片编码与标准 Prediction 构造
+├── openai.py            # 组合式 OpenAI-compatible client 与 JSON Schema 校验
 └── baselines/
-    ├── __init__.py      # built-in 模型注册
-    ├── progress_test.py # 通用 OpenAI-compatible 远程冒烟模型
+    ├── __init__.py      # 导入所有 built-in baseline
+    ├── common.py        # 模型之间确实共用的算法 helper
+    ├── progress_test.py
     ├── gvl.py
     ├── roboreward.py
     ├── robodopamine.py
-    ├── sole_r1.py       # SOLE-R1 逐帧递推 OpenAI-compatible 远程模型
+    ├── sole_r1.py
     ├── topreward.py
     ├── vlac.py
-    ├── rbm_model.py     # 同时注册 rbm 和 rewind
-    ├── rlvlmf.py
+    ├── rbm.py           # 同时注册 rbm 和 rewind
+    ├── rlvlmf.py        # preference baseline
     └── rbd_inference.py
 ```
 
-新增本地 progress 模型时，在 `baselines/` 中创建与 registry 名称一致的文件，使用
-`ProgressModel` 接口实现 `compute_progress()`，可选实现原生 `compute_progress_batch()` 和
-`remote_compute_progress()`，然后在 `baselines/__init__.py` 中导入并调用 `register_progress_model(...)`。
-详细接口见 [本地优先模型接入](docs/LOCAL_MODELS.md)。
+所有 baseline 直接继承 `Infer` 并使用 `@register_infer(name)` 注册。Runner 根据 `config.infer.name` 直接构造具体类，随后顺序逐样本调用 `predict()`。框架不区分 local/remote，也不提供公共 batch 或 adapter 层；运行方式由 baseline 自己决定。
 
-`progress_test` 不加载本地 checkpoint，仅用于检查通用 OpenAI-compatible 远程协议以及三个 Stage 的产物
-衔接；真实 baseline 的算法正确性仍应使用各模型自己的回归测试验证。
+Progress baseline 保留标准 `compute_progress()`，由 `predict()` 统一调用并生成等长、有限、位于 `[0,1]` 的 `ProgressPrediction`。RLVLMF 的 `predict()` 调用 `compute_preference()`。完整接口见 [Infer 模型接入](docs/INFER_MODELS.md)。
+
+`progress_test` 用于检查通用 OpenAI-compatible 协议及三个 Stage 的产物衔接；真实 baseline 的算法正确性仍应使用各模型自己的回归测试验证。
 
 原始数据需要先通过独立的 [`dataset_unify`](dataset_unify/) 工具转换为本地标准 Hugging Face Dataset，再交给 PRMEval 读取。数据统一的字段、配置和新增数据集方法均以该工具自己的文档为准。
 

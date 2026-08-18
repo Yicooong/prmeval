@@ -7,19 +7,19 @@ import platform
 import sys
 import time
 from collections.abc import Iterable
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TypeVar
 
 from tqdm import tqdm
 
-from ..infer import create_infer
+from ..infer import baselines as _baselines  # noqa: F401
 from ..metrics.builtins import compute_metrics
 from ..sample.adapters import create_dataset
 from ..sample.samplers import create_sampler
 from .artifacts import load_sample_artifacts, record_to_sample, write_sample_artifacts
 from .config import EvalConfig
+from .registry import INFERS
 from .schemas import (
     EvaluationRecord,
     PreferencePrediction,
@@ -112,9 +112,7 @@ class Evaluator:
         if self.manifest_path.exists():
             existing = RunManifest.model_validate_json(self.manifest_path.read_text())
             if existing.fingerprint != self.fingerprint:
-                raise RuntimeError(
-                    f"Output directory contains a different run fingerprint: {existing.fingerprint}"
-                )
+                raise RuntimeError(f"Output directory contains a different run fingerprint: {existing.fingerprint}")
             if existing.model_info.get("sample_artifact_sha256") != model_info.get("sample_artifact_sha256"):
                 raise RuntimeError("Output directory contains predictions for a different sample artifact")
             existing.status = "running"
@@ -146,7 +144,7 @@ class Evaluator:
         attempts: int = 1,
     ) -> EvaluationRecord:
         normalized = None
-        model = self.config.infer.model_id
+        model = self.config.infer.model_id or self.config.infer.model_path or self.config.infer.name
         version = self.config.infer.model_version
         if isinstance(prediction, ProgressPrediction):
             model = prediction.model
@@ -166,112 +164,68 @@ class Evaluator:
                 data={"raw_response": prediction.raw_response},
             )
         payload = source.model_dump()
-        payload.update({
-            "stage": "inferred",
-            "infer": {
-                "name": self.config.infer.name,
-                "model": model,
-                "version": version,
-            },
-            "prediction": normalized,
-            "execution": {
-                "status": "error" if error else "success",
-                "error": error,
-                "raw_response": error_response,
-                "attempts": attempts,
-                "latency_seconds": latency,
-            },
-        })
+        payload.update(
+            {
+                "stage": "inferred",
+                "infer": {
+                    "name": self.config.infer.name,
+                    "model": model,
+                    "version": version,
+                },
+                "prediction": normalized,
+                "execution": {
+                    "status": "error" if error else "success",
+                    "error": error,
+                    "raw_response": error_response,
+                    "attempts": attempts,
+                    "latency_seconds": latency,
+                },
+            }
+        )
         return EvaluationRecord.model_validate(payload)
 
     @staticmethod
     def _validate_prediction(sample, prediction) -> None:
         if prediction.sample_id != sample.sample_id:
-            raise ValueError(
-                f"Prediction sample_id mismatch: expected {sample.sample_id}, got {prediction.sample_id}"
-            )
+            raise ValueError(f"Prediction sample_id mismatch: expected {sample.sample_id}, got {prediction.sample_id}")
         if isinstance(prediction, ProgressPrediction):
             expected = len(sample.trajectory.frames)
             actual = len(prediction.progress)
             if actual != expected:
                 raise ValueError(f"Progress length mismatch: expected {expected}, got {actual}")
 
-    def _predict_batch(
+    def _predict(
         self,
         infer,
-        sources: list[EvaluationRecord],
+        source: EvaluationRecord,
         bundle_dir: Path,
-    ) -> list[EvaluationRecord]:
+    ) -> EvaluationRecord:
         started = time.monotonic()
-        infer.begin_prediction()
-        samples = []
-        valid_sources = []
-        records = []
-
-        for source in sources:
-            try:
-                samples.append(record_to_sample(source, bundle_dir))
-                valid_sources.append(source)
-            except Exception as exc:
-                records.append(self._record_for(
-                    source,
-                    error=f"{type(exc).__name__}: {exc}",
-                    latency=time.monotonic() - started,
-                    attempts=1,
-                ))
-
-        if not samples:
-            return records
-
         try:
-            predictions = infer.predict_batch(samples)
-            if len(predictions) != len(samples):
-                raise ValueError(
-                    f"Batch prediction count mismatch: expected {len(samples)}, got {len(predictions)}"
-                )
-        except Exception as exc:
-            latency = time.monotonic() - started
-            attempts = max(1, infer.attempts())
-            records.extend(
-                self._record_for(
-                    source,
-                    error=f"{type(exc).__name__}: {exc}",
-                    error_response=getattr(exc, "raw_response", None),
-                    latency=latency,
-                    attempts=attempts,
-                )
-                for source in valid_sources
+            infer.begin_prediction()
+            sample = record_to_sample(source, bundle_dir)
+            prediction = infer.predict(sample)
+            self._validate_prediction(sample, prediction)
+            return self._record_for(
+                source,
+                prediction=prediction,
+                latency=time.monotonic() - started,
+                attempts=max(1, infer.attempts()),
             )
-            return records
-
-        latency = time.monotonic() - started
-        attempts = max(1, infer.attempts())
-        for source, sample, prediction in zip(valid_sources, samples, predictions, strict=True):
-            try:
-                self._validate_prediction(sample, prediction)
-                records.append(self._record_for(
-                    source,
-                    prediction=prediction,
-                    latency=latency,
-                    attempts=attempts,
-                ))
-            except Exception as exc:
-                records.append(self._record_for(
-                    source,
-                    error=f"{type(exc).__name__}: {exc}",
-                    latency=latency,
-                    attempts=attempts,
-                ))
-        return records
-
-    def _predict(self, infer, source: EvaluationRecord, bundle_dir: Path):
-        return self._predict_batch(infer, [source], bundle_dir)[0]
+        except Exception as exc:
+            return self._record_for(
+                source,
+                error=f"{type(exc).__name__}: {exc}",
+                error_response=getattr(exc, "raw_response", None),
+                latency=time.monotonic() - started,
+                attempts=max(1, infer.attempts()),
+            )
 
     def _samples(self, trajectories) -> Iterable:
         for eval_type in self.config.sampling.eval_types:
-            yield from create_sampler(
-                eval_type, self.config.sampling, self.config.sampling.dataset_name
-            ).sample(trajectories)
+            yield from create_sampler(eval_type, self.config.sampling, self.config.sampling.dataset_name).sample(
+                trajectories
+            )
 
     def sample(self, samples_path: str | Path | None = None) -> dict:
         """Stage 1: adapt a dataset, sample it, and write the portable sample protocol."""
@@ -288,8 +242,7 @@ class Evaluator:
             existing = json.loads(manifest_path.read_text(encoding="utf-8"))
             if existing.get("fingerprint") != fingerprint:
                 raise RuntimeError(
-                    "Sample output contains a different sampling fingerprint: "
-                    f"{existing.get('fingerprint')}"
+                    f"Sample output contains a different sampling fingerprint: {existing.get('fingerprint')}"
                 )
             summary = {**existing["summary"], "reused": True}
             logger.info(
@@ -334,9 +287,7 @@ class Evaluator:
             "sampling": self.config.sampling.model_dump(),
             "summary": summary,
         }
-        manifest_path.write_text(
-            json.dumps(jsonable(manifest), indent=2, ensure_ascii=False), encoding="utf-8"
-        )
+        manifest_path.write_text(json.dumps(jsonable(manifest), indent=2, ensure_ascii=False), encoding="utf-8")
         logger.info(
             "Stage 1/3 Sample completed: %d trajectories, %d samples",
             len(trajectories),
@@ -360,17 +311,13 @@ class Evaluator:
             self.inference_summary_path = destination.with_name(f"{destination.stem}.summary.json")
             self.output_dir = destination.parent
         all_records = load_sample_artifacts(source)
-        infer = create_infer(self.config.infer)
+        infer_cls = INFERS.get(self.config.infer.name)
+        infer = infer_cls(self.config.infer)
         eval_types = {record.evaluation.type for record in all_records}
-        required = {
-            "preference" if eval_type == "quality_preference" else "progress"
-            for eval_type in eval_types
-        }
+        required = {"preference" if eval_type == "quality_preference" else "progress" for eval_type in eval_types}
         unsupported = required - infer.capabilities
         if unsupported:
-            raise ValueError(
-                f"Infer '{self.config.infer.name}' does not support: {', '.join(sorted(unsupported))}"
-            )
+            raise ValueError(f"Infer '{self.config.infer.name}' does not support: {', '.join(sorted(unsupported))}")
         model_info = {
             **infer.model_info(),
             "sample_artifact": str(source),
@@ -383,35 +330,22 @@ class Evaluator:
             len(records_to_run),
             len(completed),
         )
-        batch_size = self.config.infer.batch_size
-        batches = [
-            records_to_run[start : start + batch_size]
-            for start in range(0, len(records_to_run), batch_size)
-        ]
         new_records: list[EvaluationRecord] = []
-        with ThreadPoolExecutor(max_workers=self.config.infer.max_concurrency) as executor:
-            future_map = {
-                executor.submit(self._predict_batch, infer, batch, source.parent): batch
-                for batch in batches
-            }
-            futures = self._progress(
-                as_completed(future_map),
-                description=f"Stage 2/3 Infer (skipped={len(completed)})",
-                unit="batch",
-                total=len(batches),
+        pending_records = self._progress(
+            records_to_run,
+            description=f"Stage 2/3 Infer (skipped={len(completed)})",
+            unit="sample",
+            total=len(records_to_run),
+        )
+        for source_record in pending_records:
+            record = self._predict(infer, source_record, source.parent)
+            new_records.append(record)
+            target = (
+                self.errors_path if record.execution and record.execution.status == "error" else self.predictions_path
             )
-            for future in futures:
-                batch_records = future.result()
-                for record in batch_records:
-                    new_records.append(record)
-                    target = (
-                        self.errors_path
-                        if record.execution and record.execution.status == "error"
-                        else self.predictions_path
-                    )
-                    with target.open("a", encoding="utf-8") as handle:
-                        handle.write(json.dumps(jsonable(record), ensure_ascii=False) + "\n")
-                        handle.flush()
+            with target.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(jsonable(record), ensure_ascii=False) + "\n")
+                handle.flush()
         records = [EvaluationRecord.model_validate(row) for row in _read_jsonl(self.predictions_path)]
         successful_ids = {record.sample_id for record in records}
         unresolved_errors = {
@@ -427,11 +361,6 @@ class Evaluator:
             "fingerprint": self.fingerprint,
             "samples": str(source),
             "predictions": str(self.predictions_path),
-            "execution": {
-                "mode": self.config.infer.mode,
-                "batch_size": batch_size,
-                "max_concurrency": self.config.infer.max_concurrency,
-            },
         }
         self.inference_summary_path.write_text(
             json.dumps(jsonable(summary), indent=2, ensure_ascii=False), encoding="utf-8"

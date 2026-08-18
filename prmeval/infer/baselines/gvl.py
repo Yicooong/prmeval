@@ -1,19 +1,48 @@
-import cv2
+# ruff: noqa: E501
 import base64
-import random
-import re
-import requests
 import json
 import os
+import random
+import re
 import time
-from typing import List, Dict, Optional
+from typing import ClassVar
+
+try:
+    import cv2
+except ImportError:
+    cv2 = None
 import numpy as np
+import requests
+
+from ...core.config import InferConfig
+from ...core.registry import register_infer
+from ...core.schemas import EvaluationSample, Prediction, ProgressPrediction, ProgressSample
+from ..base import Infer
 
 
-class GVL:
-    def __init__(
+@register_infer("gvl")
+class GVL(Infer):
+    def __init__(self, config: InferConfig):
+        super().__init__(config)
+        if cv2 is None or requests is None:
+            raise RuntimeError("GVL requires OpenCV and requests")
+        options = config.options
+        self._initialize(
+            api_key=config.api_key or options.get("api_key"),
+            max_frames=int(options.get("max_frames", 15)),
+            offset=float(options.get("offset", 0.5)),
+            model_name=str(options.get("model_name", config.model_id or "gemini-2.0-flash")),
+            provider=str(options.get("provider", "gemini")),
+            max_retries=config.max_retries,
+            base_delay=float(options.get("base_delay", 1.0)),
+            max_delay=float(options.get("max_delay", 60.0)),
+        )
+
+    capabilities: ClassVar[set[str]] = {"progress"}
+
+    def _initialize(
         self,
-        api_key: str = None,
+        api_key: str | None = None,
         max_frames: int = 15,
         offset: float = 0.5,
         model_name: str = "gemini-2.0-flash",
@@ -58,7 +87,7 @@ class GVL:
 
         # List to store frame info: each element contains
         # {"gt_index": i, "shuffled_index": ..., "base64": "..."}
-        self.frames_info: List[Dict] = []
+        self.frames_info: list[dict] = []
 
     def extract_frames_from_memory(self, frames_array: np.ndarray) -> None:
         """
@@ -137,10 +166,10 @@ class GVL:
         """
         indices = list(range(1, len(self.frames_info) + 1))
         random.shuffle(indices)
-        for frame, new_idx in zip(self.frames_info, indices):
+        for frame, new_idx in zip(self.frames_info, indices, strict=True):
             frame["shuffled_index"] = new_idx
 
-    def build_prompt_parts(self, task_description: str) -> List[Dict]:
+    def build_prompt_parts(self, task_description: str) -> list[dict]:
         """
         Build the `parts` list for the request, following the previous logic:
           - First find the frame with gt_index=1 as the initial scene
@@ -192,7 +221,7 @@ class GVL:
 
         return parts
 
-    def _stream_inference_gemini(self, parts: List[Dict]) -> str:
+    def _stream_inference_gemini(self, parts: list[dict]) -> str:
         """
         Call the Gemini SSE endpoint and return the concatenated streamed text.
         Implements exponential backoff retry on throttling (429) and server errors (5xx).
@@ -252,7 +281,7 @@ class GVL:
             raise last_exception
         return ""
 
-    def _stream_inference_openai(self, parts: List[Dict]) -> str:
+    def _stream_inference_openai(self, parts: list[dict]) -> str:
         """
         Call the OpenAI API with vision capabilities and return the response text.
         Implements exponential backoff retry on throttling (429) and server errors (5xx).
@@ -266,13 +295,15 @@ class GVL:
             if "text" in part:
                 content.append({"type": "text", "text": part["text"]})
             elif "inline_data" in part:
-                content.append({
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:{part['inline_data']['mime_type']};base64,{part['inline_data']['data']}",
-                        "detail": "low",  # Use low detail for efficiency
-                    },
-                })
+                content.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:{part['inline_data']['mime_type']};base64,{part['inline_data']['data']}",
+                            "detail": "low",  # Use low detail for efficiency
+                        },
+                    }
+                )
 
         body = {
             "model": self.model_name,
@@ -331,7 +362,7 @@ class GVL:
             raise last_exception
         return ""
 
-    def stream_inference(self, parts: List[Dict]) -> str:
+    def stream_inference(self, parts: list[dict]) -> str:
         """
         Call the appropriate API endpoint based on provider and return the response text.
         """
@@ -361,7 +392,7 @@ class GVL:
         return ""
 
     @staticmethod
-    def parse_model_output(model_text: str) -> Optional[List[Dict]]:
+    def parse_model_output(model_text: str) -> list[dict] | None:
         """
         Try to extract JSON from the model text and json.loads it into a Python list.
         Return None on failure.
@@ -377,7 +408,12 @@ class GVL:
         except (json.JSONDecodeError, TypeError):
             return None
 
-    def compute_progress(self, frames_array: np.ndarray, task_description: str = "") -> List[Optional[float]]:
+    def compute_progress(
+        self,
+        frames_array: np.ndarray,
+        task_description: str = "",
+        reference_video_path: str | None = None,
+    ) -> list[float | None]:
         """
         Compute progress predictions for frames using GVL baseline.
 
@@ -393,6 +429,7 @@ class GVL:
         :param task_description: Robot task description
         :return: List of completion percentages (0-1, normalized from 0-100) aligned with (gt_index)
         """
+        del reference_video_path
         # 1) Extract frames
         self.extract_frames_from_memory(frames_array)
         if not self.frames_info:
@@ -444,3 +481,29 @@ class GVL:
                 task_completion_list.append(normalized)
         print("Task completion list:", task_completion_list)
         return task_completion_list
+
+    def predict(self, sample: EvaluationSample) -> Prediction:
+        if not isinstance(sample, ProgressSample):
+            raise TypeError(f"{self.config.name} only supports progress samples")
+        reference_path = sample.trajectory.metadata.get("reference_video_path")
+        values = np.asarray(
+            self.compute_progress(
+                np.asarray(sample.trajectory.frames),
+                sample.trajectory.task,
+                str(reference_path) if reference_path else None,
+            ),
+            dtype=float,
+        ).reshape(-1)
+        expected = len(sample.trajectory.frames)
+        if len(values) != expected:
+            raise ValueError(f"Progress length mismatch: expected {expected}, got {len(values)}")
+        if not np.isfinite(values).all():
+            raise ValueError("Progress values must be finite")
+        if ((values < 0) | (values > 1)).any():
+            raise ValueError("Progress values must be in [0, 1]")
+        return ProgressPrediction(
+            sample_id=sample.sample_id,
+            progress=values.tolist(),
+            model=self.config.model_id or self.config.model_path or self.config.name,
+            model_version=self.config.model_version,
+        )

@@ -3,15 +3,11 @@ from __future__ import annotations
 import base64
 import io
 import json
-import random
 import re
-import threading
-import time
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, ClassVar
 
-import httpx
 import numpy as np
 
 from ..core.config import InferConfig
@@ -58,24 +54,12 @@ def vision_content(frames: Any, prefix: str = "Frame") -> list[dict[str, Any]]:
 
 class Infer(ABC):
     capabilities: ClassVar[set[str]] = set()
-    supported_modes: ClassVar[set[str]] = {"local", "remote"}
-    thread_safe: bool = True
-    supports_batch: bool = False
-    transport: str
 
     def __init__(self, config: InferConfig):
         self.config = config
 
-    @classmethod
-    def supports_batch_mode(cls, mode: str) -> bool:
-        return cls.supports_batch
-
-    @classmethod
-    def thread_safe_mode(cls, mode: str) -> bool:
-        return cls.thread_safe
-
     def begin_prediction(self) -> None:
-        pass
+        return None
 
     def attempts(self) -> int:
         return 1
@@ -84,74 +68,15 @@ class Infer(ABC):
     def predict(self, sample: EvaluationSample) -> Prediction:
         raise NotImplementedError
 
-    def predict_batch(self, samples: list[EvaluationSample]) -> list[Prediction]:
-        return [self.predict(sample) for sample in samples]
-
     def model_info(self) -> dict[str, Any]:
         return {
-            "model": self.config.model_id,
+            "model": model_identity(self.config),
             "model_version": self.config.model_version,
-            "mode": self.config.mode,
-            "transport": self.transport,
         }
 
 
-class RemoteInfer(Infer):
-    supported_modes: ClassVar[set[str]] = {"remote"}
-
-    def __init__(self, config: InferConfig):
-        super().__init__(config)
-        self._local = threading.local()
-
-    def begin_prediction(self) -> None:
-        self._local.attempts = 0
-
-    def attempts(self) -> int:
-        return int(getattr(self._local, "attempts", 0))
-
-    def _headers(self) -> dict[str, str]:
-        headers = {"Content-Type": "application/json", **self.config.headers}
-        key = self.config.api_key
-        if key:
-            headers["Authorization"] = f"Bearer {key}"
-        return headers
-
-    def _post_json(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
-        base = self.config.base_url.rstrip("/")
-        suffix = path.lstrip("/")
-        if base.endswith("/v1") and suffix.startswith("v1/"):
-            suffix = suffix[3:]
-        url = f"{base}/{suffix}"
-        last_error: Exception | None = None
-        for attempt in range(self.config.max_retries + 1):
-            self._local.attempts = self.attempts() + 1
-            try:
-                response = httpx.post(
-                    url,
-                    headers=self._headers(),
-                    json=payload,
-                    timeout=self.config.timeout_seconds,
-                )
-                if response.status_code == 429 or response.status_code >= 500:
-                    raise RemoteError(f"retryable HTTP {response.status_code}: {response.text[:300]}")
-                response.raise_for_status()
-                return response.json()
-            except (httpx.HTTPError, ValueError, RemoteError) as exc:
-                last_error = exc
-                if attempt >= self.config.max_retries:
-                    break
-                delay = min(30.0, (2**attempt) + random.random())
-                time.sleep(delay)
-        raise RemoteError(
-            f"Remote request failed after {self.config.max_retries + 1} attempts: {last_error}",
-            raw_response=getattr(last_error, "raw_response", None),
-        )
-
-    def model_info(self) -> dict[str, Any]:
-        return {
-            **super().model_info(),
-            "base_url": self.config.base_url,
-        }
+def model_identity(config: InferConfig) -> str:
+    return config.model_id or config.model_path or config.name
 
 
 def parse_json_content(content: Any) -> dict[str, Any]:
@@ -170,7 +95,7 @@ def parse_json_content(content: Any) -> dict[str, Any]:
         # A few OpenAI-compatible servers occasionally wrap otherwise valid
         # structured output in a Markdown fence or emit one duplicated opening
         # brace. Recover only a complete JSON object; schema validation still
-        # runs in OpenAIChatInfer._chat after this function returns.
+        # runs in OpenAIChatClient.chat after this function returns.
         fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", text, flags=re.IGNORECASE | re.DOTALL)
         if fenced:
             text = fenced.group(1).strip()

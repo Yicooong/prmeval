@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import random
+import time
 from collections.abc import Callable
-from typing import Any, ClassVar
+from typing import Any
 
-from ..core.schemas import EvaluationSample, PreferencePrediction, PreferenceSample, ProgressPrediction, ProgressSample
-from .base import RemoteError, RemoteInfer, parse_json_content, vision_content
+import httpx
+
+from ..core.config import InferConfig
+from .base import RemoteError, parse_json_content
 
 
 def progress_schema(num_frames: int) -> dict[str, Any]:
@@ -26,21 +30,6 @@ def progress_schema(num_frames: int) -> dict[str, Any]:
             "additionalProperties": False,
         },
     }
-
-
-PREFERENCE_SCHEMA = {
-    "name": "preference_prediction",
-    "strict": True,
-    "schema": {
-        "type": "object",
-        "properties": {
-            "preference": {"type": "string", "enum": ["A", "B", "tie"]},
-            "probability_a": {"type": "number", "minimum": 0, "maximum": 1},
-        },
-        "required": ["preference", "probability_a"],
-        "additionalProperties": False,
-    },
-}
 
 
 def _validate_structured_output(value: dict[str, Any], definition: dict[str, Any]) -> None:
@@ -88,26 +77,64 @@ def _validate_number(field: str, value: Any, definition: dict[str, Any]) -> None
         raise RemoteError(f"Field '{field}' is outside the allowed range")
 
 
-class OpenAIChatInfer(RemoteInfer):
-    transport = "openai_chat"
-    capabilities: ClassVar[set[str]] = {"progress", "preference"}
+class OpenAIChatClient:
+    """Reusable OpenAI-compatible Chat Completions client."""
 
-    def progress_prompt(self, sample: ProgressSample) -> str:
-        task = sample.trajectory.task
-        return (
-            f"You are an expert roboticist. The task is: {task}. Predict task progress for every supplied frame. "
-            "Return one float per frame between 0 and 1, where 0 is the starting state and 1 is complete. "
-            "If the robot is not performing the task, return 0."
+    def __init__(self, config: InferConfig):
+        if not config.base_url:
+            raise ValueError("OpenAI-compatible inference requires infer.base_url")
+        if not config.model_id:
+            raise ValueError("OpenAI-compatible inference requires infer.model_id")
+        self.config = config
+        self._attempts = 0
+
+    def begin_prediction(self) -> None:
+        self._attempts = 0
+
+    def attempts(self) -> int:
+        return self._attempts
+
+    def _headers(self) -> dict[str, str]:
+        headers = {"Content-Type": "application/json", **self.config.headers}
+        if self.config.api_key:
+            headers["Authorization"] = f"Bearer {self.config.api_key}"
+        return headers
+
+    def _post_json(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        assert self.config.base_url is not None
+        base = self.config.base_url.rstrip("/")
+        suffix = path.lstrip("/")
+        if base.endswith("/v1") and suffix.startswith("v1/"):
+            suffix = suffix[3:]
+        url = f"{base}/{suffix}"
+        last_error: Exception | None = None
+        for attempt in range(self.config.max_retries + 1):
+            self._attempts += 1
+            try:
+                response = httpx.post(
+                    url,
+                    headers=self._headers(),
+                    json=payload,
+                    timeout=self.config.timeout_seconds,
+                )
+                if response.status_code >= 400:
+                    raise RemoteError(
+                        f"HTTP {response.status_code}: {response.text[:300]}",
+                        raw_response=response.text,
+                    )
+                response.raise_for_status()
+                return response.json()
+            except (httpx.HTTPError, ValueError, RemoteError) as exc:
+                last_error = exc
+                if attempt >= self.config.max_retries:
+                    break
+                time.sleep(min(30.0, (2**attempt) + random.random()))
+        raise RemoteError(
+            f"Remote request failed after {self.config.max_retries + 1} attempts: {last_error}",
+            raw_response=getattr(last_error, "raw_response", None),
         )
 
-    def preference_prompt(self, sample: PreferenceSample) -> str:
-        task = sample.chosen_trajectory.task
-        return (
-            f"Compare trajectories A and B for the task: {task}. Decide which trajectory makes more progress. "
-            "Return A, B, or tie and the probability that A is better."
-        )
-
-    def _completion(
+    def completion(
         self,
         messages: list[dict[str, Any]],
         request_options: dict[str, Any] | None = None,
@@ -121,7 +148,7 @@ class OpenAIChatInfer(RemoteInfer):
         payload.update(request_options or {})
         return self._post_json("/v1/chat/completions", payload)
 
-    def _chat(
+    def chat(
         self,
         messages: list[dict[str, Any]],
         schema: dict[str, Any],
@@ -135,7 +162,7 @@ class OpenAIChatInfer(RemoteInfer):
         last_error = None
         last_response = None
         for parse_attempt in range(self.config.max_retries + 1):
-            response = self._completion(messages, options)
+            response = self.completion(messages, options)
             last_response = response
             try:
                 message = response["choices"][0]["message"]
@@ -167,39 +194,3 @@ class OpenAIChatInfer(RemoteInfer):
             f"Could not parse a schema-conforming response: {last_error}",
             raw_response=last_response,
         )
-
-    def predict(self, sample: EvaluationSample):
-        if isinstance(sample, ProgressSample):
-            content = [{"type": "text", "text": self.progress_prompt(sample)}]
-            content.extend(vision_content(sample.trajectory.frames))
-            schema = progress_schema(len(sample.trajectory.frames))
-            parsed, raw = self._chat([{"role": "user", "content": content}], schema)
-            values = [float(v) for v in parsed["progress"]]
-            if not values or any(not 0 <= v <= 1 for v in values):
-                raise RemoteError(f"Invalid progress output: {values}")
-            return ProgressPrediction(
-                sample_id=sample.sample_id,
-                progress=values,
-                model=self.config.model_id,
-                model_version=self.config.model_version,
-                raw_response=raw,
-            )
-        if isinstance(sample, PreferenceSample):
-            content = [
-                {"type": "text", "text": self.preference_prompt(sample)},
-                {"type": "text", "text": "Trajectory A:"},
-            ]
-            content.extend(vision_content(sample.chosen_trajectory.frames, "A frame"))
-            content.append({"type": "text", "text": "Trajectory B:"})
-            content.extend(vision_content(sample.rejected_trajectory.frames, "B frame"))
-            parsed, raw = self._chat([{"role": "user", "content": content}], PREFERENCE_SCHEMA)
-            label = {"A": "chosen", "B": "rejected", "tie": "tie"}[parsed["preference"]]
-            return PreferencePrediction(
-                sample_id=sample.sample_id,
-                chosen_probability=float(parsed["probability_a"]),
-                preference=label,
-                model=self.config.model_id,
-                model_version=self.config.model_version,
-                raw_response=raw,
-            )
-        raise TypeError(f"Unsupported sample: {type(sample)!r}")

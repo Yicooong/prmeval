@@ -23,13 +23,22 @@ Downloading the model:
     model_path = download_vlac_model(local_dir="./models/vlac")
 """
 
+import logging
 import os
 import tempfile
-from typing import List, Dict, Optional
+from typing import ClassVar
+
 import numpy as np
-import cv2
 
+try:
+    import cv2
+except ImportError:
+    cv2 = None
 
+from ...core.config import InferConfig
+from ...core.registry import register_infer
+from ...core.schemas import EvaluationSample, Prediction, ProgressPrediction, ProgressSample
+from ..base import Infer
 
 # Disable tqdm globally before importing evo_vlac to prevent progress bars
 try:
@@ -61,11 +70,11 @@ try:
 except ImportError:
     HF_AVAILABLE = False
 
-logger = get_logger()
+logger = logging.getLogger(__name__)
 
 
 def download_vlac_model(
-    repo_id: str = "InternRobotics/VLAC", cache_dir: Optional[str] = None, local_dir: Optional[str] = None
+    repo_id: str = "InternRobotics/VLAC", cache_dir: str | None = None, local_dir: str | None = None
 ) -> str:
     """
     Download VLAC model from Hugging Face.
@@ -96,7 +105,9 @@ def download_vlac_model(
     return model_path
 
 
-class VLAC:
+@register_infer("vlac")
+class VLAC(Infer):
+    capabilities: ClassVar[set[str]] = {"progress"}
     """VLAC baseline for progress prediction using pair-wise comparison.
 
     VLAC uses a pair-wise comparison mechanism to predict task progress
@@ -104,7 +115,27 @@ class VLAC:
     to be loaded.
     """
 
-    def __init__(
+    def __init__(self, config: InferConfig):
+        super().__init__(config)
+        if not config.model_path:
+            raise ValueError("vlac requires infer.model_path")
+        if cv2 is None or not VLAC_AVAILABLE:
+            raise RuntimeError("VLAC requires OpenCV and evo_vlac")
+        options = config.options
+        self._initialize(
+            model_path=config.model_path,
+            device=str(options.get("device", "cuda:0")),
+            model_type=str(options.get("model_type", "internvl2")),
+            temperature=float(options.get("temperature", 0.5)),
+            top_k=int(options.get("top_k", 1)),
+            batch_size=int(options.get("micro_batch_size", 5)),
+            skip=int(options.get("skip", 5)),
+            frame_skip=bool(options.get("frame_skip", True)),
+            auto_download=bool(options.get("auto_download", True)),
+            use_images=bool(options.get("use_images", False)),
+        )
+
+    def _initialize(
         self,
         model_path: str,
         device: str = "cuda:0",
@@ -179,8 +210,8 @@ class VLAC:
         self.critic.set_system_prompt()
 
     def compute_progress(
-        self, frames_array: np.ndarray, task_description: str = "", reference_video_path: Optional[str] = None
-    ) -> List[Optional[float]]:
+        self, frames_array: np.ndarray, task_description: str = "", reference_video_path: str | None = None
+    ) -> list[float | None]:
         """
         Compute progress predictions for frames using VLAC baseline.
 
@@ -232,7 +263,7 @@ class VLAC:
 
                 # Run VLAC trajectory critic with images
                 # Note: get_trajectory_critic returns (critic_list, value_list) for pair-wise comparisons
-                critic_list, value_list = self.critic.get_trajectory_critic(
+                _critic_list, value_list = self.critic.get_trajectory_critic(
                     task=task_description,
                     image_list=image_list,
                     ref_image_list=ref_image_list if ref_image_list else None,
@@ -271,7 +302,7 @@ class VLAC:
                 # Run VLAC trajectory critic with video
                 # Note: web_trajectory_critic returns (result_path, value_list, critic_list, done_list)
                 # where value_list contains progress values in [0, 1] if rich=True, or [0, 100] if rich=False
-                result_path, value_list, critic_list, done_list = self.critic.web_trajectory_critic(
+                _result_path, value_list, _critic_list, _done_list = self.critic.web_trajectory_critic(
                     task_description=task_description,
                     main_video_path=compressed_video,
                     reference_video_path=None,
@@ -334,3 +365,29 @@ class VLAC:
             out.write(frame_bgr)
 
         out.release()
+
+    def predict(self, sample: EvaluationSample) -> Prediction:
+        if not isinstance(sample, ProgressSample):
+            raise TypeError(f"{self.config.name} only supports progress samples")
+        reference_path = sample.trajectory.metadata.get("reference_video_path")
+        values = np.asarray(
+            self.compute_progress(
+                np.asarray(sample.trajectory.frames),
+                sample.trajectory.task,
+                str(reference_path) if reference_path else None,
+            ),
+            dtype=float,
+        ).reshape(-1)
+        expected = len(sample.trajectory.frames)
+        if len(values) != expected:
+            raise ValueError(f"Progress length mismatch: expected {expected}, got {len(values)}")
+        if not np.isfinite(values).all():
+            raise ValueError("Progress values must be finite")
+        if ((values < 0) | (values > 1)).any():
+            raise ValueError("Progress values must be in [0, 1]")
+        return ProgressPrediction(
+            sample_id=sample.sample_id,
+            progress=values.tolist(),
+            model=self.config.model_id or self.config.model_path or self.config.name,
+            model_version=self.config.model_version,
+        )

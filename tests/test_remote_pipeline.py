@@ -4,13 +4,38 @@ import json
 import tempfile
 import threading
 import unittest
-from http.server import ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
 
 from prmeval.core.config import EvalConfig, InferConfig, SamplingConfig
 from prmeval.core.runner import Evaluator
-from prmeval.infer.mock_server import ContractHandler
+
+
+class ContractHandler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        if self.path.rstrip("/") != "/v1/chat/completions":
+            self.send_error(404)
+            return
+        length = int(self.headers.get("Content-Length", "0"))
+        payload = json.loads(self.rfile.read(length))
+        definition = payload["response_format"]["json_schema"]["schema"]["properties"]["progress"]
+        count = definition["minItems"]
+        result = {"progress": [index / max(1, count - 1) for index in range(count)]}
+        body = json.dumps(
+            {
+                "id": "mock-chat-completion",
+                "choices": [{"message": {"content": json.dumps(result)}}],
+            }
+        ).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, _format, *_args):
+        return
 
 
 class RemotePipelineTest(unittest.TestCase):
@@ -25,13 +50,15 @@ class RemotePipelineTest(unittest.TestCase):
                 pixel = [[0, 0, 0], [0, 0, 0]]
                 frames = [[pixel, pixel], [pixel, pixel], [pixel, pixel]]
                 dataset_path.write_text(
-                    json.dumps({
-                        "id": "remote-trajectory",
-                        "task": "complete the remote test task",
-                        "frames": frames,
-                        "quality_label": "successful",
-                        "data_source": "remote-test-fixture",
-                    })
+                    json.dumps(
+                        {
+                            "id": "remote-trajectory",
+                            "task": "complete the remote test task",
+                            "frames": frames,
+                            "quality_label": "successful",
+                            "data_source": "remote-test-fixture",
+                        }
+                    )
                     + "\n",
                     encoding="utf-8",
                 )
@@ -46,11 +73,9 @@ class RemotePipelineTest(unittest.TestCase):
                     ),
                     infer=InferConfig(
                         name="progress_test",
-                        mode="remote",
                         base_url=f"http://127.0.0.1:{server.server_port}/v1",
                         model_id="contract-vlm",
                         max_retries=0,
-                        max_concurrency=2,
                     ),
                     metrics=["reward_alignment"],
                     output_dir=str(root / "output"),
@@ -69,20 +94,16 @@ class RemotePipelineTest(unittest.TestCase):
                 failure_detail = error_path.read_text(encoding="utf-8") if error_path.exists() else summary
                 self.assertEqual(summary["coverage"]["successful"], 1, failure_detail)
                 self.assertEqual(summary["coverage"]["failed"], 0, summary)
+                self.assertNotIn("execution", summary)
                 self.assertTrue((output / "samples.jsonl").is_file())
                 self.assertTrue((output / "predictions.jsonl").is_file())
                 self.assertTrue((output / "all_metrics.json").is_file())
-                self.assertEqual(summary["execution"], {
-                    "mode": "remote",
-                    "batch_size": 1,
-                    "max_concurrency": 2,
-                })
-                self.assertEqual(summary["metrics"]["reward_alignment"]["loss"], 0.0)
 
                 prediction = json.loads((output / "predictions.jsonl").read_text(encoding="utf-8"))
                 self.assertEqual(prediction["stage"], "inferred")
                 self.assertEqual(prediction["infer"]["name"], "progress_test")
                 self.assertEqual(prediction["prediction"]["values"], [0.0, 0.5, 1.0])
+                self.assertEqual(prediction["prediction"]["data"]["raw_response"], None)
         finally:
             server.shutdown()
             server.server_close()

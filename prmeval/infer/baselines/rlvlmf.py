@@ -1,14 +1,21 @@
 #!/usr/bin/env python3
+# ruff: noqa: E501
 """Direct VLM baseline for preference comparison."""
 
-import os
-import time
 import base64
+import os
 import random
+import time
 from io import BytesIO
-from typing import List, Dict, Any, Optional, Tuple
-from PIL import Image
+from typing import Any, ClassVar
+
 import numpy as np
+from PIL import Image
+
+from ...core.config import InferConfig
+from ...core.registry import register_infer
+from ...core.schemas import EvaluationSample, Prediction, PreferencePrediction, PreferenceSample
+from ..base import Infer, model_identity
 
 try:
     import google.generativeai as genai
@@ -25,14 +32,26 @@ except ImportError:
     OPENAI_AVAILABLE = False
 
 
-class RLVLMF:
+@register_infer("rlvlmf")
+class RLVLMF(Infer):
+    capabilities: ClassVar[set[str]] = {"preference"}
     """RL-VLM-F baseline for preference comparison between trajectories.
 
     Uses vision-language models (Gemini or GPT-4V) to directly compare two trajectories
     and predict which one better achieves a given task goal.
     """
 
-    def __init__(self, vlm_provider: str = "gemini", temperature: float = 0.0):
+    def __init__(self, config: InferConfig):
+        super().__init__(config)
+        options = config.options
+        self.api_key = config.api_key or options.get("api_key")
+        self.model_name = str(options.get("model_name", config.model_id or "gemini-2.5-flash"))
+        self._initialize(
+            vlm_provider=str(options.get("provider", "gemini")).lower(),
+            temperature=config.temperature,
+        )
+
+    def _initialize(self, vlm_provider: str = "gemini", temperature: float = 0.0):
         self.vlm_provider = vlm_provider
         self.temperature = temperature
 
@@ -42,28 +61,32 @@ class RLVLMF:
     def _setup_vlm(self):
         """Initialize VLM provider."""
         if self.vlm_provider == "gemini":
-            api_key = os.environ.get("GEMINI_API_KEY")
+            api_key = self.api_key or os.environ.get("GEMINI_API_KEY")
+            if not GEMINI_AVAILABLE:
+                raise RuntimeError("RLVLMF Gemini provider requires google-generativeai")
             if not api_key:
                 raise ValueError("Set GEMINI_API_KEY environment variable")
 
             genai.configure(api_key=api_key)
             # Original RL-VLM-F used 'gemini-pro-vision' (deprecated); we use a supported model
             # Using latest flash model for speed and cost-effectiveness
-            self.model = genai.GenerativeModel("gemini-2.5-flash")
+            self.model = genai.GenerativeModel(self.model_name)
 
         elif self.vlm_provider == "openai":
-            api_key = os.environ.get("OPENAI_API_KEY")
+            api_key = self.api_key or os.environ.get("OPENAI_API_KEY")
+            if not OPENAI_AVAILABLE:
+                raise RuntimeError("RLVLMF OpenAI provider requires openai")
             if not api_key:
                 raise ValueError("Set OPENAI_API_KEY environment variable")
 
             openai.api_key = api_key
-            self.client = openai.OpenAI()
+            self.client = openai.OpenAI(api_key=api_key)
         else:
             raise ValueError(f"Unknown provider: {self.vlm_provider}")
 
     def compute_preference(
-        self, chosen_images: List[Image.Image], rejected_images: List[Image.Image], task_description: str = ""
-    ) -> Dict[str, Any]:
+        self, chosen_images: list[Image.Image], rejected_images: list[Image.Image], task_description: str = ""
+    ) -> dict[str, Any]:
         """Compute preference prediction between trajectories using VLM."""
         start_time = time.time()
 
@@ -80,10 +103,8 @@ class RLVLMF:
 
         if chosen_is_first:
             image_a, image_b = chosen_frame, rejected_frame
-            image_a_label, image_b_label = "chosen", "rejected"
         else:
             image_a, image_b = rejected_frame, chosen_frame
-            image_a_label, image_b_label = "rejected", "chosen"
 
         # Query VLM with randomized images
         prompt = self._build_prompt(task_description)
@@ -156,8 +177,8 @@ class RLVLMF:
         base = """ Each frame comes from a robot trajectory. (Think causally and use image comparison to verify any confusion between the base of the robot and the end effector)
 1. What is shown in the first image (Image A)?
 2. What is shown in the second image (Image B)?
-3. For this question here is the Goal Text: {goal_text}  
-Is the goal being better achieved in Image A or Image B? 
+3. For this question here is the Goal Text: {goal_text}
+Is the goal being better achieved in Image A or Image B?
 Reply a single line of 0 if the goal is better achieved in Image A, or 1 if it is better achieved in Image B.
 Reply -1 if the text is really unsure about either making any progress towards the goal or there is absolutely no difference. (only use this if there is no discernible signs of progress in either image or no discernible difference between the progress in the two images for the given task)
 """
@@ -169,7 +190,7 @@ Reply -1 if the text is really unsure about either making any progress towards t
 
         return base.format(goal_text=goal_text)
 
-    def _query_gemini(self, prompt: str, chosen: Image.Image, rejected: Image.Image) -> Tuple[str, str]:
+    def _query_gemini(self, prompt: str, chosen: Image.Image, rejected: Image.Image) -> tuple[str, str]:
         """Query Gemini for preference."""
         query = ["Consider the following two images:\nImage 1:", chosen, "Image 2:", rejected, prompt]
 
@@ -204,7 +225,7 @@ Reply -1 if the text is really unsure about either making any progress towards t
         else:
             return "tie", full_response
 
-    def _query_openai(self, prompt: str, chosen: Image.Image, rejected: Image.Image) -> Tuple[str, str]:
+    def _query_openai(self, prompt: str, chosen: Image.Image, rejected: Image.Image) -> tuple[str, str]:
         """Query GPT-4V for preference."""
 
         def to_base64(img: Image.Image) -> str:
@@ -245,3 +266,36 @@ Reply -1 if the text is really unsure about either making any progress towards t
             return "B", full_response
         else:
             return "tie", full_response
+
+    def predict(self, sample: EvaluationSample) -> Prediction:
+        if not isinstance(sample, PreferenceSample):
+            raise TypeError(f"{self.config.name} only supports preference samples")
+
+        def to_images(frames) -> list[Image.Image]:
+            images = []
+            for frame in frames:
+                if isinstance(frame, Image.Image):
+                    images.append(frame)
+                    continue
+                array = np.asarray(frame)
+                if array.dtype != np.uint8:
+                    array = np.clip(array, 0, 255).astype(np.uint8)
+                images.append(Image.fromarray(array))
+            return images
+
+        result = self.compute_preference(
+            to_images(sample.chosen_trajectory.frames),
+            to_images(sample.rejected_trajectory.frames),
+            sample.chosen_trajectory.task,
+        )
+        choice = result.get("vlm_chose_chosen")
+        preference = "tie" if choice is None else ("chosen" if choice else "rejected")
+        probability = 0.5 if choice is None else (1.0 if choice else 0.0)
+        return PreferencePrediction(
+            sample_id=sample.sample_id,
+            chosen_probability=probability,
+            preference=preference,
+            model=model_identity(self.config),
+            model_version=self.config.model_version,
+            raw_response=result,
+        )

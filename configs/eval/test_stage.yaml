@@ -10,13 +10,11 @@ sampling:
 
 infer:
   name: progress_test
-  mode: remote
   base_url: BASE_URL
   api_key: OPENAI_API_KEY
   model_id: MODEL_ID
   timeout_seconds: 120
   max_retries: 0
-  max_concurrency: 1
   temperature: 0
   max_tokens: 12800
   options: {}

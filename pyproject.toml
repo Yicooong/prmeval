@@ -1,7 +1,7 @@
 [project]
 name = "prmeval"
 version = "0.1.0"
-description = "Extensible remote evaluation framework for robot reward models"
+description = "Extensible evaluation framework for robot reward models"
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "PRMEval contributors" }]

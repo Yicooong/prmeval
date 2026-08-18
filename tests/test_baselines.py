@@ -1,11 +1,14 @@
 from __future__ import annotations
 
-import hashlib
 import unittest
-from types import SimpleNamespace
+from types import MethodType
+from unittest.mock import Mock
 
 import numpy as np
 
+from prmeval.core.config import InferConfig
+from prmeval.core.schemas import PreferenceSample, ProgressSample, Trajectory
+from prmeval.infer.base import Infer, RemoteError
 from prmeval.infer.baselines import (
     GVL,
     RLVLMF,
@@ -17,230 +20,148 @@ from prmeval.infer.baselines import (
     TopReward,
 )
 from prmeval.infer.baselines.common import interpolate_prefix_values, trajectory_prefix_lengths
+from prmeval.infer.baselines.progress_test import ProgressTestModel
+
+PROGRESS_BASELINES = (
+    ("gvl", GVL),
+    ("rbm", RBMModel),
+    ("robodopamine", RoboDopamine),
+    ("roboreward", RoboReward),
+    ("sole_r1", SoleR1),
+    ("topreward", TopReward),
+    ("vlac", VLAC),
+    ("progress_test", ProgressTestModel),
+)
 
 
-class _RemoteStub:
-    def __init__(self, chats=None, completions=None):
-        self.chats = list(chats or [])
-        self.completions = list(completions or [])
-        self.chat_calls = []
-        self.completion_calls = []
-        self.config = SimpleNamespace(max_retries=0)
+def progress_sample(num_frames: int = 3) -> ProgressSample:
+    return ProgressSample(
+        sample_id="sample",
+        eval_type="reward_alignment",
+        trajectory=Trajectory(
+            id="trajectory",
+            task="pick up the cube",
+            frames=np.zeros((num_frames, 2, 2, 3), dtype=np.uint8),
+            metadata={"reference_video_path": "/tmp/reference.mp4"},
+        ),
+    )
 
-    def chat(self, messages, schema, request_options=None, validator=None):
-        self.chat_calls.append((messages, schema, request_options))
-        parsed = self.chats.pop(0)
-        if validator:
-            validator(parsed)
-        return parsed, {"parsed": parsed}
 
-    def completion(self, messages, request_options=None):
-        self.completion_calls.append((messages, request_options))
-        return self.completions.pop(0)
+def preference_sample() -> PreferenceSample:
+    chosen = Trajectory(
+        id="chosen",
+        task="pick up the cube",
+        frames=np.zeros((2, 2, 2, 3), dtype=np.uint8),
+    )
+    rejected = chosen.model_copy(update={"id": "rejected"})
+    return PreferenceSample(
+        sample_id="preference",
+        eval_type="quality_preference",
+        chosen_trajectory=chosen,
+        rejected_trajectory=rejected,
+    )
 
 
 class TrajectoryPrefixesTest(unittest.TestCase):
     def test_samples_cumulative_prefixes_and_interpolates_endpoints(self):
         lengths = trajectory_prefix_lengths(num_frames=4, num_prefix_samples=3)
-
         self.assertEqual(lengths, [1, 2, 4])
-        self.assertEqual(trajectory_prefix_lengths(num_frames=2, num_prefix_samples=2), [1, 2])
-        self.assertEqual(trajectory_prefix_lengths(num_frames=4, num_prefix_samples=1), [4])
         np.testing.assert_allclose(
             interpolate_prefix_values(4, lengths, [0.0, 0.5, 1.0]),
             [0.0, 0.5, 0.75, 1.0],
         )
 
-    def test_roboreward_local_wrapper_scores_each_prefix(self):
-        model = RoboReward.__new__(RoboReward)
-        model.num_prefix_samples = 3
-        observed_lengths = []
 
-        def score_prefixes(frames_list, _tasks):
-            observed_lengths.extend(len(frames) for frames in frames_list)
-            endpoint_values = {1: 0.0, 2: 0.5, 3: 0.75, 4: 1.0}
-            return [[endpoint_values[len(frames)]] * len(frames) for frames in frames_list]
+class ProgressPredictContractTest(unittest.TestCase):
+    def test_each_progress_baseline_predict_calls_its_compute_progress(self):
+        sample = progress_sample()
+        for name, baseline_cls in PROGRESS_BASELINES:
+            with self.subTest(name=name):
+                model = baseline_cls.__new__(baseline_cls)
+                Infer.__init__(model, InferConfig(name=name, model_id=f"{name}-model"))
+                compute = Mock(return_value=np.array([0.0, 0.5, 1.0]))
+                model.compute_progress = compute
 
-        model._compute_progress_batch_without_prefixes = score_prefixes
-        values = model.compute_progress(np.zeros((4, 2, 2, 3), dtype=np.uint8), "task")
+                prediction = baseline_cls.predict(model, sample)
 
-        self.assertEqual(observed_lengths, [1, 2, 4])
-        np.testing.assert_allclose(values, [0.0, 0.5, 0.75, 1.0])
+                args = compute.call_args.args
+                np.testing.assert_array_equal(args[0], sample.trajectory.frames)
+                self.assertEqual(args[1], "pick up the cube")
+                self.assertEqual(args[2], "/tmp/reference.mp4")
+                self.assertEqual(prediction.progress, [0.0, 0.5, 1.0])
+                self.assertEqual(prediction.sample_id, "sample")
+                self.assertEqual(prediction.model, f"{name}-model")
 
-        observed_lengths.clear()
-        batched = model.compute_progress_batch(
-            [np.zeros((4, 2, 2, 3)), np.zeros((3, 2, 2, 3)), np.zeros((0, 2, 2, 3))],
-            ["first", "second", "empty"],
+    def test_each_progress_baseline_validates_its_output(self):
+        sample = progress_sample()
+        invalid = (
+            ([0.0, 1.0], "length mismatch"),
+            ([0.0, float("nan"), 1.0], "finite"),
+            ([0.0, float("inf"), 1.0], "finite"),
+            ([-0.1, 0.5, 1.0], r"in \[0, 1\]"),
+            ([0.0, 0.5, 1.1], r"in \[0, 1\]"),
         )
+        for name, baseline_cls in PROGRESS_BASELINES:
+            model = baseline_cls.__new__(baseline_cls)
+            Infer.__init__(model, InferConfig(name=name, model_id="model"))
+            for values, message in invalid:
+                model.compute_progress = Mock(return_value=values)
+                with (
+                    self.subTest(name=name, values=values),
+                    self.assertRaisesRegex(ValueError, message),
+                ):
+                    baseline_cls.predict(model, sample)
 
-        self.assertEqual(observed_lengths, [1, 2, 4, 1, 2, 3])
-        np.testing.assert_allclose(batched[0], [0.0, 0.5, 0.75, 1.0])
-        np.testing.assert_allclose(batched[1], [0.0, 0.5, 0.75])
+    def test_progress_predict_rejects_preference_sample(self):
+        model = GVL.__new__(GVL)
+        Infer.__init__(model, InferConfig(name="gvl", model_id="model"))
+        model.compute_progress = Mock()
+        with self.assertRaisesRegex(TypeError, "progress samples"):
+            GVL.predict(model, preference_sample())
 
 
-        self.assertEqual(batched[2], [])
-class BaselineRemoteTest(unittest.TestCase):
-    def setUp(self):
-        self.frames = np.zeros((4, 2, 2, 3), dtype=np.uint8)
+class PreferencePredictContractTest(unittest.TestCase):
+    def test_rlvlmf_predict_calls_compute_preference(self):
+        model = RLVLMF.__new__(RLVLMF)
+        Infer.__init__(model, InferConfig(name="rlvlmf", model_id="provider-model"))
 
-    def test_roboreward_remote_scores_prefixes_and_interpolates(self):
-        remote = _RemoteStub(chats=[{"score": 1}, {"score": 3}, {"score": 4}])
-        result = RoboReward.remote_compute_progress(
-            self.frames,
-            "task",
-            None,
-            remote,
-            {"num_prefix_samples": 3},
-        )
-        np.testing.assert_allclose(result.values, [0.0, 0.5, 0.625, 0.75])
-        self.assertEqual([item["prefix_length"] for item in result.raw_response], [1, 2, 4])
-        self.assertEqual([item["score"] for item in result.raw_response], [1, 3, 4])
-        self.assertEqual(remote.chat_calls[0][1]["name"], "roboreward_score")
-        self.assertEqual([len(call[0][0]["content"]) // 2 for call in remote.chat_calls], [1, 2, 4])
+        def compute(_self, chosen, rejected, task):
+            self.assertEqual(len(chosen), 2)
+            self.assertEqual(len(rejected), 2)
+            self.assertEqual(task, "pick up the cube")
+            return {"vlm_chose_chosen": True, "provider": "mock"}
 
-    def test_sole_r1_remote_carries_progress_across_stage_one_frames(self):
-        frames = np.stack([np.full((2, 2, 3), value, dtype=np.uint8) for value in (0, 64, 128)])
-        remote = _RemoteStub(
-            completions=[
-                {"choices": [{"message": {"content": "<think>closer</think><answer>12.5%</answer>"}}]},
-                {"choices": [{"message": {"content": "<think>grasped</think><answer>80%</answer>"}}]},
-            ]
-        )
+        model.compute_preference = MethodType(compute, model)
+        prediction = model.predict(preference_sample())
+        self.assertEqual(prediction.preference, "chosen")
+        self.assertEqual(prediction.chosen_probability, 1.0)
+        self.assertEqual(prediction.model, "provider-model")
+        self.assertEqual(prediction.raw_response["provider"], "mock")
 
-        result = SoleR1.remote_compute_progress(frames, "pick up the cube", None, remote, {})
 
-        np.testing.assert_allclose(result.values, [0.0, 0.125, 0.8])
-        self.assertEqual(len(remote.completion_calls), 2)
-        second_prompt = remote.completion_calls[1][0][1]["content"][-1]["text"]
-        self.assertIn("previous timestep is 12.5%", second_prompt)
-        first_images = [
-            item["image_url"]["url"]
-            for item in remote.completion_calls[0][0][1]["content"]
-            if item["type"] == "image_url"
+class SoleR1ComputeTest(unittest.TestCase):
+    def test_compute_progress_uses_instance_client_and_carries_progress(self):
+        frames = np.zeros((3, 2, 2, 3), dtype=np.uint8)
+        client = Mock()
+        client.completion.side_effect = [
+            {"choices": [{"message": {"content": "<answer>12.5%</answer>"}}]},
+            {"choices": [{"message": {"content": "<answer>80%</answer>"}}]},
         ]
-        self.assertEqual(len(first_images), 3)
-        self.assertEqual(first_images[0], first_images[1])
-        self.assertNotEqual(first_images[1], first_images[2])
-        self.assertEqual([item["frame_index"] for item in result.raw_response], [1, 2])
+        model = SoleR1.__new__(SoleR1)
+        model.client = client
+        values = model.compute_progress(frames, "task")
+        np.testing.assert_allclose(values, [0.0, 0.125, 0.8])
+        second_prompt = client.completion.call_args_list[1].args[0][1]["content"][-1]["text"]
+        self.assertIn("previous timestep is 12.5%", second_prompt)
 
-    def test_sole_r1_single_frame_does_not_call_remote(self):
-        remote = _RemoteStub()
-        result = SoleR1.remote_compute_progress(self.frames[:1], "task", None, remote, {})
-        self.assertEqual(result.values.tolist(), [0.0])
-        self.assertEqual(remote.completion_calls, [])
-        self.assertEqual(result.raw_response, [])
-
-    def test_sole_r1_rejects_empty_or_malformed_inputs(self):
-        with self.assertRaisesRegex(ValueError, "at least one"):
-            SoleR1.remote_compute_progress(self.frames[:0], "task", None, _RemoteStub(), {})
-
-        malformed = _RemoteStub(
-            completions=[
-                {"choices": [{"message": {"content": "progress is probably ten percent"}}]},
-            ]
-        )
-        with self.assertRaisesRegex(Exception, "numeric <answer>"):
-            SoleR1.remote_compute_progress(self.frames[:2], "task", None, malformed, {})
-
-    def test_sole_r1_parses_signed_numbers_without_clipping(self):
-        self.assertEqual(SoleR1._parse_progress_percent("<answer>-2.5%</answer>"), -2.5)
-        remote = _RemoteStub(
-            completions=[
-                {"choices": [{"message": {"content": "<answer>-2.5%</answer>"}}]},
-            ]
-        )
-        with self.assertRaisesRegex(Exception, "outside PRMEval"):
-            SoleR1.remote_compute_progress(self.frames[:2], "task", None, remote, {})
-
-    def test_topreward_remote_prefix_logprobs(self):
-        completions = []
-        for reward in (-3.0, -2.0, -1.0):
-            completions.append(
-                {
-                    "choices": [
-                        {
-                            "message": {"content": "False"},
-                            "logprobs": {
-                                "content": [
-                                    {
-                                        "token": "False",
-                                        "logprob": -0.1,
-                                        "top_logprobs": [{"token": " True", "logprob": reward}],
-                                    }
-                                ]
-                            },
-                        }
-                    ]
-                }
-            )
-        remote = _RemoteStub(completions=completions)
-        result = TopReward.remote_compute_progress(
-            self.frames,
-            "task",
-            None,
-            remote,
-            {"num_prefix_samples": 3},
-        )
-        np.testing.assert_allclose(result.values, [0.0, 0.5, 0.75, 1.0])
-        self.assertEqual(len(remote.completion_calls), 3)
-        self.assertTrue(all(call[1]["logprobs"] for call in remote.completion_calls))
-
-    def test_robodopamine_remote_incremental_curve(self):
-        remote = _RemoteStub(
-            chats=[
-                {"relative_change_percent": 50},
-                {"relative_change_percent": -50},
-            ]
-        )
-        result = RoboDopamine.remote_compute_progress(
-            self.frames,
-            "task",
-            None,
-            remote,
-            {"eval_mode": "incremental", "frame_interval": 2},
-        )
-        self.assertEqual(result.values, [0.0, 0.5, 0.25, 0.25])
-        self.assertEqual(len(remote.chat_calls), 2)
-
-    def test_vlac_remote_normalizes_and_pads(self):
-        remote = _RemoteStub(chats=[{"progress": [0, 50]}])
-        result = VLAC.remote_compute_progress(self.frames, "task", None, remote, {})
-        self.assertEqual(result.values, [0.0, 0.5, 0.5, 0.5])
-
-    def test_rbm_remote_requires_exact_progress_curve(self):
-        remote = _RemoteStub(chats=[{"progress": [0.0, 0.25, 0.5, 1.0]}])
-        result = RBMModel.remote_compute_progress(self.frames, "task", None, remote, {})
-        self.assertEqual(result.values, [0.0, 0.25, 0.5, 1.0])
-        definition = remote.chat_calls[0][1]["schema"]["properties"]["progress"]
-        self.assertEqual(definition["minItems"], 4)
-        self.assertEqual(definition["maxItems"], 4)
-
-    def test_gvl_remote_restores_shuffled_order(self):
-        parsed = {
-            "frames": [
-                {
-                    "frame_number": index + 1,
-                    "frame_description": str(index),
-                    "task_completion_percentage": percentage,
-                }
-                for index, percentage in enumerate((10, 40, 70, 100))
-            ]
-        }
-        remote = _RemoteStub(chats=[parsed])
-        result = GVL.remote_compute_progress(self.frames, "task", None, remote, {})
-        self.assertEqual(sorted(result.values), [0.1, 0.4, 0.7, 1.0])
-
-    def test_rlvlmf_remote_maps_image_order_to_chosen_probability(self):
-        chosen = self.frames[:2]
-        rejected = self.frames[2:]
-        remote = _RemoteStub(chats=[{"preference": "A", "probability_a": 0.8}])
-        result = RLVLMF.remote_compute_preference(chosen, rejected, "task", remote, {})
-        seed = int(hashlib.sha256(b"task|2|2").hexdigest()[:16], 16)
-        if seed % 2:
-            self.assertEqual((result.preference, result.chosen_probability), ("chosen", 0.8))
-        else:
-            self.assertEqual(result.preference, "rejected")
-            self.assertAlmostEqual(result.chosen_probability, 0.2)
+    def test_malformed_response_retains_raw_response(self):
+        response = {"choices": [{"message": {"content": "no numeric answer"}}]}
+        model = SoleR1.__new__(SoleR1)
+        model.client = Mock()
+        model.client.completion.return_value = response
+        with self.assertRaises(RemoteError) as raised:
+            model.compute_progress(np.zeros((2, 2, 2, 3), dtype=np.uint8), "task")
+        self.assertEqual(raised.exception.raw_response, response)
 
 
 if __name__ == "__main__":

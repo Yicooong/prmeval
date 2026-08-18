@@ -9,35 +9,58 @@ Supports single-view (same frames for all three camera inputs) and optional goal
 When no goal/reference is provided, a blank placeholder image is used per upstream recommendation.
 """
 
-import os
 import json
+import os
 import tempfile
 from pathlib import Path
-from typing import Optional
+from typing import ClassVar
 
 import numpy as np
-import cv2
 
-from .rbd_inference import GRMInference
-
+from ...core.config import InferConfig
+from ...core.registry import register_infer
+from ...core.schemas import EvaluationSample, Prediction, ProgressPrediction, ProgressSample
+from ..base import Infer
 
 # Known model IDs for config / docs
 ROBODOPAMINE_GRM_3B = "tanhuajie2001/Robo-Dopamine-GRM-3B"
 ROBODOPAMINE_GRM_8B = "tanhuajie2001/Robo-Dopamine-GRM-2.0-8B-Preview"
 
 
-class RoboDopamine:
+@register_infer("robodopamine")
+class RoboDopamine(Infer):
+    capabilities: ClassVar[set[str]] = {"progress"}
     """Robo-Dopamine GRM baseline. Uses single-view frames for all three camera inputs.
     Supports single-view without goal image (blank placeholder used for REFERENCE END).
     """
 
-    def __init__(
+    def __init__(self, config: InferConfig):
+        super().__init__(config)
+        if not config.model_path:
+            raise ValueError("robodopamine requires infer.model_path")
+        options = config.options
+        self._initialize(
+            model_path=config.model_path,
+            frame_interval=int(options.get("frame_interval", 1)),
+            batch_size=int(options.get("micro_batch_size", 1)),
+            eval_mode=str(options.get("eval_mode", "incremental")),
+        )
+
+    def _initialize(
         self,
         model_path: str = ROBODOPAMINE_GRM_3B,
         frame_interval: int = 1,
         batch_size: int = 1,
         eval_mode: str = "incremental",
     ):
+        global cv2, GRMInference
+        try:
+            import cv2
+
+            from .rbd_inference import GRMInference
+        except ImportError as exc:
+            raise RuntimeError("RoboDopamine requires OpenCV and its model dependencies") from exc
+
         self.model_path = model_path
         self.frame_interval = frame_interval
         self.batch_size = batch_size
@@ -50,8 +73,8 @@ class RoboDopamine:
         cv2.imwrite(str(out_path), cv2.cvtColor(blank, cv2.COLOR_RGB2BGR))
 
     def _goal_image_path(
-        self, tmpdir: Path, frames_dir: Path, num_frames: int, reference_video_path: Optional[str]
-    ) -> Optional[str]:
+        self, tmpdir: Path, frames_dir: Path, num_frames: int, reference_video_path: str | None
+    ) -> str | None:
         """Resolve goal image path: reference video last frame, or blank placeholder when none."""
         if reference_video_path and os.path.exists(reference_video_path):
             cap = cv2.VideoCapture(reference_video_path)
@@ -72,7 +95,7 @@ class RoboDopamine:
         self,
         frames_array: np.ndarray,
         task_description: str = "",
-        reference_video_path: Optional[str] = None,
+        reference_video_path: str | None = None,
     ) -> np.ndarray:
         if frames_array is None or frames_array.size == 0:
             return np.array([], dtype=np.float64)
@@ -95,9 +118,7 @@ class RoboDopamine:
 
             out_root = tmpdir_path / "out"
             out_root.mkdir(parents=True, exist_ok=True)
-            goal_image = self._goal_image_path(
-                tmpdir_path, frames_dir, num_frames, reference_video_path
-            )
+            goal_image = self._goal_image_path(tmpdir_path, frames_dir, num_frames, reference_video_path)
             # run_pipeline: single-view = same dir for all cams; no-goal = blank placeholder
             run_root = self._grm.run_pipeline(
                 cam_high_path=str(frames_dir),
@@ -113,7 +134,7 @@ class RoboDopamine:
             )
 
             pred_path = Path(run_root) / "pred_vllm.json"
-            with open(pred_path, "r", encoding="utf-8") as f:
+            with open(pred_path, encoding="utf-8") as f:
                 results = json.load(f)
 
         progress_list = [0.0]
@@ -134,3 +155,29 @@ class RoboDopamine:
             progress_arr = progress_arr[:num_frames]
 
         return progress_arr
+
+    def predict(self, sample: EvaluationSample) -> Prediction:
+        if not isinstance(sample, ProgressSample):
+            raise TypeError(f"{self.config.name} only supports progress samples")
+        reference_path = sample.trajectory.metadata.get("reference_video_path")
+        values = np.asarray(
+            self.compute_progress(
+                np.asarray(sample.trajectory.frames),
+                sample.trajectory.task,
+                str(reference_path) if reference_path else None,
+            ),
+            dtype=float,
+        ).reshape(-1)
+        expected = len(sample.trajectory.frames)
+        if len(values) != expected:
+            raise ValueError(f"Progress length mismatch: expected {expected}, got {len(values)}")
+        if not np.isfinite(values).all():
+            raise ValueError("Progress values must be finite")
+        if ((values < 0) | (values > 1)).any():
+            raise ValueError("Progress values must be in [0, 1]")
+        return ProgressPrediction(
+            sample_id=sample.sample_id,
+            progress=values.tolist(),
+            model=self.config.model_id or self.config.model_path or self.config.name,
+            model_version=self.config.model_version,
+        )

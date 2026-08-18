@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: E501
 """
 RoboReward baseline for discrete end-of-episode progress reward prediction.
 
@@ -12,28 +13,24 @@ RoboReward predicts discrete scores (1-5) for task completion:
 Based on: https://huggingface.co/teetone/RoboReward-8B
 """
 
+import logging
 import re
+import shutil
 import tempfile
 import uuid
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import ClassVar
+
 import numpy as np
 from PIL import Image
-import torch
-import shutil
 
-from transformers import Qwen3VLForConditionalGeneration, AutoProcessor
-from qwen_vl_utils import process_vision_info
+from ...core.config import InferConfig
+from ...core.registry import register_infer
+from ...core.schemas import EvaluationSample, Prediction, ProgressPrediction, ProgressSample
+from ..base import Infer
 
-try:
-    from unsloth import FastVisionModel
+logger = logging.getLogger(__name__)
 
-    HAS_UNSLOTH = True
-except ImportError:
-    HAS_UNSLOTH = False
-
-
-logger = get_logger()
 
 def convert_frames_to_pil_images(frames, frames_shape=None):
     """Convert frames to PIL images if they are numpy arrays or serialized bytes.
@@ -45,7 +42,6 @@ def convert_frames_to_pil_images(frames, frames_shape=None):
     - List of PIL Images: returns as-is
     - List of mixed types (strings, PIL Images, numpy arrays): converts appropriately
     """
-    from PIL import Image
 
     # If frames are serialized bytes, deserialize first
     if isinstance(frames, bytes):
@@ -117,11 +113,25 @@ def convert_frames_to_pil_images(frames, frames_shape=None):
         return pil_images
 
     raise ValueError(f"Unsupported frames type: {type(frames)}")
- 
-class RoboReward:
+
+
+@register_infer("roboreward")
+class RoboReward(Infer):
+    def __init__(self, config: InferConfig):
+        super().__init__(config)
+        if not config.model_path:
+            raise ValueError("roboreward requires infer.model_path")
+        options = config.options
+        self._initialize(
+            model_path=config.model_path,
+            max_new_tokens=int(options.get("max_new_tokens", 128)),
+            use_unsloth=bool(options.get("use_unsloth", True)),
+        )
+
+    capabilities: ClassVar[set[str]] = {"progress"}
     """RoboReward baseline for discrete end-of-episode progress reward prediction."""
 
-    def __init__(
+    def _initialize(
         self,
         model_path: str = "teetone/RoboReward-8B",
         max_new_tokens: int = 128,
@@ -135,6 +145,21 @@ class RoboReward:
             max_new_tokens: Maximum number of tokens to generate
             use_unsloth: Whether to use unsloth for faster inference (default: True)
         """
+        global torch, Qwen3VLForConditionalGeneration, AutoProcessor, process_vision_info, FastVisionModel
+        global HAS_UNSLOTH
+        try:
+            import torch
+            from qwen_vl_utils import process_vision_info
+            from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
+        except ImportError as exc:
+            raise RuntimeError("RoboReward requires torch, transformers, and qwen-vl-utils") from exc
+        try:
+            from unsloth import FastVisionModel
+
+            HAS_UNSLOTH = True
+        except ImportError:
+            HAS_UNSLOTH = False
+
         logger.info(f"Loading RoboReward model: {model_path}")
 
         # Use unsloth for faster inference if available and requested
@@ -174,7 +199,7 @@ class RoboReward:
         Returns:
             Formatted prompt string
         """
-        prompt = """Given the task, assign a discrete progress score reward (1,2,3,4,5) for the robot in the video in the format: ANSWER: <score>
+        prompt = f"""Given the task, assign a discrete progress score reward (1,2,3,4,5) for the robot in the video in the format: ANSWER: <score>
 Rubric for end-of-episode progress (judge only the final state without time limits):
 1 - No Success: Final state shows no goal-relevant change for the command.
 2 - Minimal Progress: Final state shows a small but insufficient change toward the goal.
@@ -182,10 +207,10 @@ Rubric for end-of-episode progress (judge only the final state without time limi
 4 - Near Completion: Final state is correct in region and intent but misses a single minor requirement.
 5 - Perfect Completion: Final state satisfies all requirements.
 
-Task: {task}""".format(task=task_description)
+Task: {task_description}"""
         return prompt
 
-    def _parse_score(self, output_text: str) -> Optional[int]:
+    def _parse_score(self, output_text: str) -> int | None:
         """Parse discrete score (1-5) from model output.
 
         Args:
@@ -213,7 +238,12 @@ Task: {task}""".format(task=task_description)
 
         return None
 
-    def compute_progress(self, frames_array: np.ndarray, task_description: str = "") -> List[Optional[float]]:
+    def compute_progress(
+        self,
+        frames_array: np.ndarray,
+        task_description: str = "",
+        reference_video_path: str | None = None,
+    ) -> list[float | None]:
         """
         Compute progress prediction for a frame sequence using RoboReward baseline.
 
@@ -229,6 +259,7 @@ Task: {task}""".format(task=task_description)
             List of discrete scores (1.0-5.0) for each frame.
             All frames get the same discrete score (end-of-episode score for this subsequence).
         """
+        del reference_video_path
         if frames_array is None or frames_array.size == 0:
             return []
 
@@ -291,7 +322,7 @@ Task: {task}""".format(task=task_description)
 
         # Split videos and metadata (video_inputs is list of (video, video_metadata) tuples)
         if video_inputs is not None:
-            videos, video_metadatas = zip(*video_inputs)
+            videos, video_metadatas = zip(*video_inputs, strict=True)
             videos, video_metadatas = list(videos), list(video_metadatas)
         else:
             videos = None
@@ -319,7 +350,9 @@ Task: {task}""".format(task=task_description)
             )
 
         # Decode output
-        generated_ids_trimmed = [out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs["input_ids"], generated_ids)]
+        generated_ids_trimmed = [
+            out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs["input_ids"], generated_ids, strict=True)
+        ]
         output_texts = self.processor.batch_decode(
             generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
         )
@@ -345,182 +378,28 @@ Task: {task}""".format(task=task_description)
 
         return result
 
-    def compute_progress_batched(
-        self, frames_list: List[np.ndarray], task_descriptions: List[str]
-    ) -> List[List[Optional[float]]]:
-        """
-        Compute progress predictions for a batch of frame sequences.
-
-        This processes multiple sequences in a single batch for efficiency.
-        Each sequence can have different lengths but will be processed together.
-
-        Args:
-            frames_list: List of (N, H, W, 3) uint8 arrays, one per sample
-            task_descriptions: List of task description strings, one per sample
-
-        Returns:
-            List of progress predictions, one list per sample.
-            Each inner list contains discrete scores (normalized 0-1) for each frame.
-        """
-        if not frames_list:
-            return []
-
-        batch_size = len(frames_list)
-        if len(task_descriptions) != batch_size:
-            raise ValueError(f"Mismatch: {batch_size} frame arrays but {len(task_descriptions)} task descriptions")
-
-        # Prepare all messages and track original frame counts
-        all_messages = []
-        original_frame_counts = []
-        temp_dirs = []
-
-        for idx, (frames_array, task_desc) in enumerate(zip(frames_list, task_descriptions)):
-            if frames_array is None or frames_array.size == 0:
-                all_messages.append(None)
-                original_frame_counts.append(0)
-                temp_dirs.append(None)
-                continue
-
-            # Convert frames to PIL Images
-            frames_pil = convert_frames_to_pil_images(frames_array)
-            if not frames_pil:
-                all_messages.append(None)
-                original_frame_counts.append(0)
-                temp_dirs.append(None)
-                continue
-
-            original_num_frames = len(frames_pil)
-            original_frame_counts.append(original_num_frames)
-
-            # Ensure at least 2 frames for video processing
-            if len(frames_pil) == 1:
-                frames_pil = [frames_pil[0], frames_pil[0]]
-
-            # Build prompt
-            prompt = self._build_prompt(task_desc)
-
-            # Create temporary directory for frame files
-            tmpdir = tempfile.mkdtemp()
-            temp_dirs.append(tmpdir)
-
-            unique_id = uuid.uuid4().hex
-            frame_paths = []
-            for i, frame_pil in enumerate(frames_pil):
-                frame_path = Path(tmpdir) / f"roboreward_{unique_id}_frame_{i:04d}.jpg"
-                frame_pil.save(frame_path, "JPEG", quality=85, optimize=True)
-                frame_paths.append(f"file://{frame_path}")
-
-            # Build message
-            message = [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "video", "video": frame_paths, "sample_fps": 1.0},
-                        {"type": "text", "text": prompt},
-                    ],
-                }
-            ]
-            all_messages.append(message)
-
-        # Filter out None messages for batched processing
-        valid_indices = [i for i, msg in enumerate(all_messages) if msg is not None]
-        valid_messages = [all_messages[i] for i in valid_indices]
-
-        if not valid_messages:
-            # Clean up temp dirs before returning
-            for tmpdir in temp_dirs:
-                if tmpdir is not None:
-                    shutil.rmtree(tmpdir, ignore_errors=True)
-            return [[] for _ in range(batch_size)]
-
-        # Process all valid messages
-        all_texts = []
-        all_image_inputs = []
-        all_video_inputs = []
-        all_video_kwargs_list = []
-
-        for message in valid_messages:
-            text = self.processor.apply_chat_template(message, tokenize=False, add_generation_prompt=True)
-            all_texts.append(text)
-
-            # Process vision info
-            image_inputs, video_inputs, video_kwargs = process_vision_info(
-                [message],
-                image_patch_size=16,
-                return_video_kwargs=True,
-                return_video_metadata=True,
-            )
-            all_image_inputs.append(image_inputs)
-            all_video_inputs.append(video_inputs)
-            all_video_kwargs_list.append(video_kwargs)
-
-        # Process each sample individually (batching videos with different sizes is complex)
-        # but do it efficiently by reusing the prepared data
-        valid_results = []
-        for i, (text, image_inputs, video_inputs, video_kwargs) in enumerate(
-            zip(all_texts, all_image_inputs, all_video_inputs, all_video_kwargs_list)
-        ):
-            # Split videos and metadata
-            if video_inputs is not None:
-                videos, video_metadatas = zip(*video_inputs)
-                videos, video_metadatas = list(videos), list(video_metadatas)
-            else:
-                videos = None
-                video_metadatas = None
-
-            # Process inputs
-            inputs = self.processor(
-                text=[text],
-                images=image_inputs,
-                videos=videos,
-                video_metadata=video_metadatas,
-                padding=True,
-                return_tensors="pt",
-                do_resize=False,
-                **video_kwargs,
-            )
-            inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
-
-            # Generate
-            with torch.no_grad():
-                generated_ids = self.model.generate(
-                    **inputs,
-                    max_new_tokens=self.max_new_tokens,
-                    do_sample=False,
-                )
-
-            # Decode output
-            generated_ids_trimmed = [
-                out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs["input_ids"], generated_ids)
-            ]
-            output_texts = self.processor.batch_decode(
-                generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
-            )
-
-            # Parse score
-            output_text = output_texts[0]
-            discrete_score = self._parse_score(output_text)
-            if discrete_score is None:
-                logger.warning(f"Failed to parse score from output: {output_text}")
-                discrete_score = 1
-
-            valid_results.append(discrete_score)
-
-        # Map results back to original indices
-        results = []
-        valid_result_idx = 0
-        for i in range(batch_size):
-            if i in valid_indices:
-                discrete_score = valid_results[valid_result_idx]
-                valid_result_idx += 1
-                # Normalize to 0-1 and repeat for all frames
-                results.append([float(discrete_score) / 4.0 - 0.25] * original_frame_counts[i])
-            else:
-                results.append([])
-
-        # Clean up all temporary directories
-        for tmpdir in temp_dirs:
-            if tmpdir is not None:
-                shutil.rmtree(tmpdir, ignore_errors=True)
-
-        return results
+    def predict(self, sample: EvaluationSample) -> Prediction:
+        if not isinstance(sample, ProgressSample):
+            raise TypeError(f"{self.config.name} only supports progress samples")
+        reference_path = sample.trajectory.metadata.get("reference_video_path")
+        values = np.asarray(
+            self.compute_progress(
+                np.asarray(sample.trajectory.frames),
+                sample.trajectory.task,
+                str(reference_path) if reference_path else None,
+            ),
+            dtype=float,
+        ).reshape(-1)
+        expected = len(sample.trajectory.frames)
+        if len(values) != expected:
+            raise ValueError(f"Progress length mismatch: expected {expected}, got {len(values)}")
+        if not np.isfinite(values).all():
+            raise ValueError("Progress values must be finite")
+        if ((values < 0) | (values > 1)).any():
+            raise ValueError("Progress values must be in [0, 1]")
+        return ProgressPrediction(
+            sample_id=sample.sample_id,
+            progress=values.tolist(),
+            model=self.config.model_id or self.config.model_path or self.config.name,
+            model_version=self.config.model_version,
+        )
