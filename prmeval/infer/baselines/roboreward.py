@@ -126,7 +126,7 @@ class RoboReward(Infer):
             model_path=config.model_path,
             max_new_tokens=int(options.get("max_new_tokens", 128)),
             use_unsloth=bool(options.get("use_unsloth", True)),
-            num_prefix_samples=int(options.get("num_prefix_samples", None))
+            num_prefix_samples=int(options.get("num_prefix_samples", -1))
         )
 
     capabilities: ClassVar[set[str]] = {"progress"}
@@ -137,7 +137,7 @@ class RoboReward(Infer):
         model_path: str = "teetone/RoboReward-8B",
         max_new_tokens: int = 128,
         use_unsloth: bool = True,
-        num_prefix_samples: int = 8
+        num_prefix_samples: int = -1
     ):
         """
         Initialize RoboReward model.
@@ -280,7 +280,8 @@ Task: {task_description}"""
             # Duplicate the single frame to make it 2 frames
             frames_pil = [frames_pil[0], frames_pil[0]]
             num_frames = 2
-        if self.num_prefix_samples is not None and num_frames > 2:
+        # self.num_prefix_samples need include start and end 
+        if self.num_prefix_samples > 1 and num_frames > 2:
             num_samples = min(self.num_prefix_samples, num_frames)
             prefix_lengths = np.linspace(1, num_frames, num_samples, dtype=int)
             prefix_lengths = sorted({int(x) for x in prefix_lengths})
