@@ -126,6 +126,7 @@ class RoboReward(Infer):
             model_path=config.model_path,
             max_new_tokens=int(options.get("max_new_tokens", 128)),
             use_unsloth=bool(options.get("use_unsloth", True)),
+            num_prefix_samples=int(options.get("num_prefix_samples", None))
         )
 
     capabilities: ClassVar[set[str]] = {"progress"}
@@ -136,6 +137,7 @@ class RoboReward(Infer):
         model_path: str = "teetone/RoboReward-8B",
         max_new_tokens: int = 128,
         use_unsloth: bool = True,
+        num_prefix_samples: int = 8
     ):
         """
         Initialize RoboReward model.
@@ -187,6 +189,7 @@ class RoboReward(Infer):
         )
         self.max_new_tokens = max_new_tokens
         self.model_path = model_path
+        self.num_prefix_samples = num_prefix_samples
 
         print(f"RoboReward model loaded on device: {self.model.device}")
 
@@ -270,14 +273,22 @@ Task: {task_description}"""
 
         if not frames_pil:
             return []
+        result = []
 
         num_frames = len(frames_pil)
-
-        # Ensure at least 2 frames for video processing (qwen_vl_utils requires minimum 2 frames)
         if num_frames == 1:
             # Duplicate the single frame to make it 2 frames
             frames_pil = [frames_pil[0], frames_pil[0]]
             num_frames = 2
+        if self.num_prefix_samples is not None and num_frames > 2:
+            num_samples = min(self.num_prefix_samples, num_frames)
+            prefix_lengths = np.linspace(1, num_frames, num_samples, dtype=int)
+            prefix_lengths = sorted({int(x) for x in prefix_lengths})
+        else:
+            prefix_lengths = [num_frames]
+
+        # Ensure at least 2 frames for video processing (qwen_vl_utils requires minimum 2 frames)
+        
 
         # Build prompt
         prompt = self._build_prompt(task_description)
@@ -298,85 +309,93 @@ Task: {task_description}"""
 
         logger.info(f"RoboReward: Saved {len(frame_paths)} frames as JPEG files in {tmpdir}")
 
-        # Build message with frames as list of file paths (following Qwen3-VL pattern)
-        message = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "video", "video": frame_paths, "sample_fps": 1.0},
-                    {"type": "text", "text": prompt},
-                ],
-            }
-        ]
+        for length in prefix_lengths:
 
-        # Apply chat template
-        text = self.processor.apply_chat_template(message, tokenize=False, add_generation_prompt=True)
+            # Build message with frames as list of file paths (following Qwen3-VL pattern)
+            message = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "video", "video": frame_paths[:length], "sample_fps": 1.0},
+                        {"type": "text", "text": prompt},
+                    ],
+                }
+            ]
 
-        # Process vision info (qwen-vl-utils handles resizing)
-        image_inputs, video_inputs, video_kwargs = process_vision_info(
-            [message],
-            image_patch_size=16,
-            return_video_kwargs=True,
-            return_video_metadata=True,
-        )
+            # Apply chat template
+            text = self.processor.apply_chat_template(message, tokenize=False, add_generation_prompt=True)
 
-        # Split videos and metadata (video_inputs is list of (video, video_metadata) tuples)
-        if video_inputs is not None:
-            videos, video_metadatas = zip(*video_inputs, strict=True)
-            videos, video_metadatas = list(videos), list(video_metadatas)
-        else:
-            videos = None
-            video_metadatas = None
-
-        # Process inputs (do_resize=False since qwen-vl-utils already resized)
-        inputs = self.processor(
-            text=[text],
-            images=image_inputs,
-            videos=videos,
-            video_metadata=video_metadatas,
-            padding=True,
-            return_tensors="pt",
-            do_resize=False,  # qwen-vl-utils already resized
-            **video_kwargs,
-        )
-        inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
-
-        # Generate
-        with torch.no_grad():
-            generated_ids = self.model.generate(
-                **inputs,
-                max_new_tokens=self.max_new_tokens,
-                do_sample=False,  # Deterministic
+            # Process vision info (qwen-vl-utils handles resizing)
+            image_inputs, video_inputs, video_kwargs = process_vision_info(
+                [message],
+                image_patch_size=16,
+                return_video_kwargs=True,
+                return_video_metadata=True,
             )
 
-        # Decode output
-        generated_ids_trimmed = [
-            out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs["input_ids"], generated_ids, strict=True)
-        ]
-        output_texts = self.processor.batch_decode(
-            generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
-        )
+            # Split videos and metadata (video_inputs is list of (video, video_metadata) tuples)
+            if video_inputs is not None:
+                videos, video_metadatas = zip(*video_inputs, strict=True)
+                videos, video_metadatas = list(videos), list(video_metadatas)
+            else:
+                videos = None
+                video_metadatas = None
 
-        # Parse score
-        output_text = output_texts[0]
-        discrete_score = self._parse_score(output_text)
-        logger.info(f"RoboReward: Discrete score: {discrete_score}")
+            # Process inputs (do_resize=False since qwen-vl-utils already resized)
+            inputs = self.processor(
+                text=[text],
+                images=image_inputs,
+                videos=videos,
+                video_metadata=video_metadatas,
+                padding=True,
+                return_tensors="pt",
+                do_resize=False,  # qwen-vl-utils already resized
+                **video_kwargs,
+            )
+            inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
 
-        if discrete_score is None:
-            print(f"[!] Failed to parse score from output: {output_text}")
-            discrete_score = 1  # Default to minimum score if parsing fails
+            # Generate
+            with torch.no_grad():
+                generated_ids = self.model.generate(
+                    **inputs,
+                    max_new_tokens=self.max_new_tokens,
+                    do_sample=False,  # Deterministic
+                )
 
-        # Return same discrete score for all frames in this subsequence
-        # Use original num_frames from frames_array (before duplication)
-        original_num_frames = len(convert_frames_to_pil_images(frames_array))
+            # Decode output
+            generated_ids_trimmed = [
+                out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs["input_ids"], generated_ids, strict=True)
+            ]
+            output_texts = self.processor.batch_decode(
+                generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
+            )
 
-        # because RoboReward returns a score between 1 and 5, we need to normalize it to 0-1
-        result = [float(discrete_score) / 4.0 - 0.25] * original_num_frames
+            # Parse score
+            output_text = output_texts[0]
+            discrete_score = self._parse_score(output_text)
+            logger.info(f"RoboReward: Discrete score: {discrete_score}")
 
+            if discrete_score is None:
+                print(f"[!] Failed to parse score from output: {output_text}")
+                discrete_score = 1  # Default to minimum score if parsing fails
+
+            # Return same discrete score for all frames in this subsequence
+            # Use original num_frames from frames_array (before duplication)
+            # original_num_frames = len(convert_frames_to_pil_images(frames_array))
+
+            # because RoboReward returns a score between 1 and 5, we need to normalize it to 0-1
+            # result = [float(discrete_score) / 4.0 - 0.25] * original_num_frames
+            result.append(float(discrete_score) / 4.0 - 0.25)
+
+        lengths = np.array(prefix_lengths, dtype=np.float64)
+        values = np.array(result, dtype=np.float64)
+        frame_indices = np.arange(1, num_frames + 1, dtype=np.float64)
+        progress = np.interp(frame_indices, lengths, values)
+        
         # Clean up temporary directory
         shutil.rmtree(tmpdir, ignore_errors=True)
 
-        return result
+        return np.clip(progress.astype(np.float64), 0.0, 1.0).tolist()
 
     def predict(self, sample: EvaluationSample) -> Prediction:
         if not isinstance(sample, ProgressSample):
