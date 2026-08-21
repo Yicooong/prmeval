@@ -2,7 +2,7 @@
 
 from .gvl import GVL
 from .progress_test import ProgressTestModel
-from .rbm import RBMModel
+from .rbm_model import RBMModel
 from .rlvlmf import RLVLMF
 from .robodopamine import RoboDopamine
 from .roboreward import RoboReward

@@ -17,12 +17,18 @@ from ...core.config import InferConfig
 from ...core.registry import register_infer
 from ...core.schemas import EvaluationSample, Prediction, ProgressPrediction, ProgressSample
 from ..base import Infer
+from transformers import AutoProcessor, Qwen3VLModel
+from qwen_vl_utils import process_vision_info
+import torch
+from .robometer.utils import load_model_from_hf, convert_frames_to_pil_images
+
 
 logger = logging.getLogger(__name__)
 
 
+
 @register_infer("rewind")
-@register_infer("rbm")
+@register_infer("robometer")
 class RBMModel(Infer):
     """RBM/ReWiND model for baseline evaluation with unified compute methods."""
 
@@ -32,7 +38,9 @@ class RBMModel(Infer):
         super().__init__(config)
         if not config.model_path:
             raise ValueError(f"{config.name} requires infer.model_path")
+        self.is_rewind = False
         self._initialize(config.model_path)
+        self.max_new_tokens = int(config.options.get("max_new_tokens", 128))
 
     def _initialize(self, model_path: str):
         """Initialize the RBM/ReWiND model wrapper.
@@ -41,21 +49,6 @@ class RBMModel(Infer):
             model_path: Path to model checkpoint (HuggingFace repo ID or local path)
                            The config.yaml will be loaded from the checkpoint automatically
         """
-        try:
-            import torch
-            from robometer.data.dataset_types import ProgressSample
-            from robometer.data.datasets.helpers import create_trajectory_from_dict
-            from robometer.evals.eval_server import forward_model
-            from robometer.utils.save import load_model_from_hf
-            from robometer.utils.setup_utils import setup_batch_collator
-        except ImportError as exc:
-            raise RuntimeError("RBM/ReWiND local inference requires torch and the robometer model package") from exc
-
-        self.torch = torch
-        self.ProgressSample = ProgressSample
-        self.create_trajectory_from_dict = create_trajectory_from_dict
-        self.forward_model = forward_model
-        self.checkpoint_path = model_path
 
         # Automatically determine device (cuda:0 if available, else cpu)
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -64,6 +57,7 @@ class RBMModel(Infer):
         # Load model, config, processor, and tokenizer using the helper function
         # This handles loading config.yaml from checkpoint and setting up everything
         logger.info(f"Loading model from checkpoint: {model_path}")
+    
         exp_config, tokenizer, processor, model = load_model_from_hf(
             model_path=model_path,
             device=device,
@@ -83,17 +77,8 @@ class RBMModel(Infer):
             torch.backends.cudnn.benchmark = True
             torch.backends.cudnn.deterministic = False
 
-        # Determine if this is ReWiND or RBM
-        self.is_rewind = "rewind" in exp_config.model.base_model_id.lower()
         logger.info(f"Model type: {'ReWiND' if self.is_rewind else 'RBM'}")
 
-        # Create batch collator using the loaded config
-        self.batch_collator = setup_batch_collator(
-            processor=processor,
-            tokenizer=tokenizer,
-            cfg=exp_config,
-            is_eval=True,
-        )
 
         logger.info(f"Model loaded successfully on device: {self.device}")
 
@@ -112,30 +97,66 @@ class RBMModel(Infer):
         Returns:
             List of progress values (0-1) for each frame
         """
-        # Create a ProgressSample from the inputs
-        traj_dict = {
-            "frames": frames_array,
-            "task": task_description,
-            "num_frames": len(frames_array) if hasattr(frames_array, "__len__") else frames_array.shape[0],
-        }
+        if frames_array is None or frames_array.size == 0:
+            return []
+        frames_pil = convert_frames_to_pil_images(frames_array)
 
-        trajectory = self.create_trajectory_from_dict(traj_dict)
-        sample = self.ProgressSample(trajectory=trajectory)
+        prompt = f"The task for the robot is '{task_description}'. Given the trajectory video, predict the task progress at each frame, how far along the robot is towards completing the task, a float between 0 and 1, where 0 is the starting state and 1 is when the task is completed. If the robot is not performing the same task, predict 0 progress."
+        # Build content list
+        content_list = [{"type": "text", "text": prompt}]
+        for pil in frames_pil:
+            content_list.append({"type": "image", "image": pil})
 
-        # Collate into batch
-        batch_inputs = self.batch_collator([sample])
+        message = [
+            {
+                "role": "user",
+                "content": content_list,
+            }
+        ]
+        text = self.processor.apply_chat_template(
+                    message,
+                    tokenize=False,
+                    add_generation_prompt=False,
+                    add_vision_id=True,
+                    enable_thinking=False,
+                    fps=1,
+                )
+        image_inputs, video_inputs, video_kwargs = process_vision_info(
+                [message],
+                image_patch_size=16,
+                return_video_kwargs=True,
+                return_video_metadata=True,
+            )
+        # Split videos and metadata (video_inputs is list of (video, video_metadata) tuples)
+        if video_inputs is not None:
+            videos, video_metadatas = zip(*video_inputs, strict=True)
+            videos, video_metadatas = list(videos), list(video_metadatas)
+        else:
+            videos = None
+            video_metadatas = None
 
-        # Extract progress_inputs from batch_inputs (batch_collator returns nested structure)
-        progress_inputs = batch_inputs["progress_inputs"]
+        inputs = self.processor(
+                text=[text],
+                images=image_inputs,
+                videos=videos,
+                video_metadata=video_metadatas,
+                padding=True,
+                return_tensors="pt",
+                do_resize=False,  # qwen-vl-utils already resized
+                **video_kwargs,
+            )
 
-        # Move to device
-        progress_inputs = {
-            k: v.to(self.device) if isinstance(v, self.torch.Tensor) else v for k, v in progress_inputs.items()
-        }
+        inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
 
-        # Forward pass with inference mode for additional optimization
-        with self.torch.inference_mode():  # Faster than torch.no_grad() for inference-only code
-            model_output, _ = self.forward_model(self.model, progress_inputs, sample_type="progress")
+    
+
+        # Faster than torch.no_grad() for inference-only code
+        with self.torch.inference_mode(): 
+            model_output, _ = self.model.generate(
+                    **inputs,
+                    max_new_tokens=self.max_new_tokens,
+                    do_sample=False,  # Deterministic
+                )
 
         # Extract progress logits
         progress_logits = model_output.progress_logits
