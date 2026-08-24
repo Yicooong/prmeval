@@ -488,6 +488,7 @@ class RBM(PredictionHeadsMixin, PreTrainedModel):
         batch_indices, positions = token_mask.nonzero(as_tuple=True)  # both [total_tokens]
 
         if len(positions) == 0:
+            logger.warning(f"{token_name} not found in any sequence. Returning empty tensor.")
             raise ValueError(f"{token_name} not found in any sequence")
 
         # Extract all hidden states at token positions at once - vectorized

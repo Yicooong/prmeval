@@ -25,6 +25,49 @@ from transformers import (
 from .rbm import RBM
 logger = logging.getLogger(__name__)
 
+def convert_bins_to_continuous(bin_logits: torch.Tensor | np.ndarray) -> torch.Tensor | np.ndarray:
+    """Convert discrete bins to continuous progress values in [0, 1] via weighted sum of bin centers."""
+    num_bins = bin_logits.shape[-1]
+    if (bin_logits.sum(dim=-1) == 1).all():
+        bin_probs = bin_logits
+    else:
+        bin_probs = (
+            torch.softmax(bin_logits, dim=-1)
+            if isinstance(bin_logits, torch.Tensor)
+            else np.softmax(bin_logits, axis=-1)
+        )
+    bin_centers = (
+        torch.linspace(0.0, 1.0, num_bins, device=bin_logits.device, dtype=bin_logits.dtype)
+        if isinstance(bin_logits, torch.Tensor)
+        else np.linspace(0.0, 1.0, num_bins)
+    )
+    return (
+        (bin_probs * bin_centers).sum(dim=-1)
+        if isinstance(bin_logits, torch.Tensor)
+        else (bin_probs * bin_centers).sum(axis=-1)
+    )
+
+
+MAX_IMAGE_SIDE = 480  # bigger side
+MAX_IMAGE_PIXELS = 1024 * 1024  # safety cap (1.0 MP). raise to 1.5MP if stable
+def _resize_pil(pil: Image.Image, max_side: int = MAX_IMAGE_SIDE, max_pixels: int = MAX_IMAGE_PIXELS) -> Image.Image:
+    pil = pil.convert("RGB")
+    w, h = pil.size
+
+    # Scale down if max side too large
+    scale_side = min(1.0, max_side / float(max(w, h)))
+
+    # Scale down if too many pixels (area cap)
+    scale_area = (max_pixels / float(w * h)) ** 0.5 if (w * h) > max_pixels else 1.0
+
+    scale = min(scale_side, scale_area)
+
+    if scale < 1.0:
+        nw, nh = max(1, int(w * scale)), max(1, int(h * scale))
+        pil = pil.resize((nw, nh), resample=Image.BICUBIC)
+
+    return pil
+
 @dataclass
 class ModelOutput:
     pref_logits: torch.Tensor | None = None
@@ -253,7 +296,7 @@ def _load_checkpoint_weights_from_safetensors(
     checkpoint_state_dict = {}
     for safetensors_file in safetensors_files:
         logger.debug(f"Loading weights from {safetensors_file.name}")
-        file_state_dict = load_file(str(safetensors_file))
+        file_state_dict = load_file(str(safetensors_file), device="cuda")
         checkpoint_state_dict.update(file_state_dict)
 
     # Check what adapter keys are in checkpoint
@@ -561,6 +604,7 @@ def _load_base_model_standard(
             torch_dtype=torch_dtype,
             **extra_kwargs,
             quantization_config=bnb,
+            device_map="auto"
         )
         logger.info("Using Qwen3 models")
 
@@ -1004,6 +1048,7 @@ def setup_model_and_processor(
 
 def load_model_from_hf(
     model_path: str,
+    base_model_path: str, 
     device: torch.device,
 ) -> tuple[ExperimentConfig | None, Any | None, Any | None, Any | None]:
     """
@@ -1110,7 +1155,7 @@ def load_model_from_hf(
 
     # Extract PEFT config from the loaded experiment config
     peft_config = exp_config.peft if hasattr(exp_config, "peft") and exp_config.model.use_peft else None
-    exp_config.model.base_model_id = "/mnt/shared-storage-gpfs2/gpfs2-shared-public/huggingface/zskj-hub/models--Qwen--Qwen3-VL-4B-Instruct"
+    exp_config.model.base_model_id = base_model_path  # Override base_model_id with provided base_model_path
     tokenizer, processor, reward_model = setup_model_and_processor(
         exp_config.model, str(resolved_path), peft_config=peft_config
     )
