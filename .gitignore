@@ -31,8 +31,8 @@ baseline_eval_output/
 .venv-robodopamine/
 unsloth_compiled_cache/
 venv_robodopamine.txt
-examples/
-configs/eval
+configs/eval/*
+!configs/eval/synthetic_temporal_robustness.yaml
 # Editor and operating-system temporary files
 .DS_Store
 *.swp

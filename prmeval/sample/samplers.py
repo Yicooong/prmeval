@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import itertools
+import json
 import random
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from typing import Iterable
+from collections.abc import Iterable
+from typing import ClassVar
 
 import numpy as np
 
@@ -14,6 +16,7 @@ from ..core.registry import SAMPLERS, register_sampler
 from ..core.schemas import PreferenceSample, ProgressSample, Trajectory
 from .adapters import load_frames
 from .progress import compute_progress, linspace_indices
+from .temporal import transform_indices
 
 
 def stable_sample_id(dataset: str, trajectory_ids: list[str], eval_type: str, indices: list[int]) -> str:
@@ -35,12 +38,14 @@ def _subset_trajectory(traj: Trajectory, indices: list[int], config: SamplingCon
         amount = config.max_frames - len(selected)
         selected = np.concatenate([selected, np.repeat(selected[-1:], amount, axis=0)], axis=0)
         target.extend([target[-1]] * amount)
-    return traj.model_copy(update={
-        "frames": selected,
-        "frame_indices": indices,
-        "num_frames_total": total,
-        "target_progress": target,
-    })
+    return traj.model_copy(
+        update={
+            "frames": selected,
+            "frame_indices": indices,
+            "num_frames_total": total,
+            "target_progress": target,
+        }
+    )
 
 
 class EvalSampler(ABC):
@@ -70,6 +75,92 @@ class RewardAlignmentSampler(EvalSampler):
                 trajectory=sampled,
                 eval_type=self.eval_type,
             )
+
+
+def _temporal_rng(seed: int, *parts: str) -> random.Random:
+    digest = hashlib.sha256("|".join([str(seed), *parts]).encode()).digest()
+    return random.Random(int.from_bytes(digest[:8], "big"))
+
+
+@register_sampler("synthetic_temporal_robustness")
+class SyntheticTemporalRobustnessSampler(EvalSampler):
+    eval_type = "synthetic_temporal_robustness"
+
+    def sample(self, trajectories: list[Trajectory]):
+        temporal = self.config.temporal_robustness
+        if temporal.base_frames is None:  # SamplingConfig resolves this when the eval type is enabled.
+            raise ValueError("temporal_robustness.base_frames was not resolved")
+        base_count = temporal.base_frames
+        for trajectory in trajectories:
+            if trajectory.quality_label not in (None, "successful"):
+                continue
+            if trajectory.partial_success is not None and not np.isclose(trajectory.partial_success, 1.0):
+                continue
+            frames = load_frames(trajectory.frames)
+            total = len(frames)
+            if total < base_count:
+                continue
+            base_indices = linspace_indices(total, base_count)
+            source_progress = compute_progress(total, list(range(total)), self.config.progress_type)
+            variants = [("original", 0)]
+            variants.extend(
+                (transform, variant)
+                for transform in temporal.transforms
+                for variant in range(temporal.variants_per_transform)
+            )
+            for transform, variant in variants:
+                rng = _temporal_rng(
+                    self.config.random_seed,
+                    self.dataset_name,
+                    trajectory.data_source,
+                    trajectory.id,
+                    transform,
+                    str(variant),
+                )
+                indices, params = transform_indices(base_indices, transform, rng, temporal, self.config.max_frames)
+                target = [source_progress[index] for index in indices]
+                metadata = {
+                    **trajectory.metadata,
+                    "synthetic_temporal": {
+                        "transform": transform,
+                        "variant": variant,
+                        "parameters": params,
+                        "base_frames": base_count,
+                        "transformed_frames": len(indices),
+                        "length_ratio": len(indices) / base_count,
+                        "source_trajectory_id": trajectory.id,
+                        "source_quality_label": trajectory.quality_label,
+                        "source_partial_success": trajectory.partial_success,
+                        "final_progress": target[-1],
+                        "synthetic_success": transform not in {"rewind", "truncate"},
+                    },
+                }
+                descriptor = json.dumps(
+                    {"transform": transform, "variant": variant, "parameters": params},
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                sampled = trajectory.model_copy(
+                    update={
+                        "frames": frames[indices],
+                        "frame_indices": indices,
+                        "num_frames_total": total,
+                        "target_progress": target,
+                        "metadata": metadata,
+                        "quality_label": "failure" if transform in {"rewind", "truncate"} else "successful",
+                        "partial_success": target[-1] if transform in {"rewind", "truncate"} else 1.0,
+                    }
+                )
+                yield ProgressSample(
+                    sample_id=stable_sample_id(
+                        self.dataset_name,
+                        [trajectory.data_source, trajectory.id, descriptor],
+                        self.eval_type,
+                        indices,
+                    ),
+                    trajectory=sampled,
+                    eval_type=self.eval_type,
+                )
 
 
 @register_sampler("policy_ranking")
@@ -150,7 +241,10 @@ class ConfusionMatrixSampler(EvalSampler):
                 sampled = _subset_trajectory(overridden, indices, self.config)
                 yield ProgressSample(
                     sample_id=stable_sample_id(
-                        self.dataset_name, [trajectory.data_source, trajectory.id, language_task], self.eval_type, indices
+                        self.dataset_name,
+                        [trajectory.data_source, trajectory.id, language_task],
+                        self.eval_type,
+                        indices,
                     ),
                     trajectory=sampled,
                     eval_type=self.eval_type,
@@ -160,7 +254,7 @@ class ConfusionMatrixSampler(EvalSampler):
 @register_sampler("quality_preference")
 class QualityPreferenceSampler(EvalSampler):
     eval_type = "quality_preference"
-    quality_rank = {"successful": 2, "suboptimal": 1, "failure": 0, "failed": 0}
+    quality_rank: ClassVar = {"successful": 2, "suboptimal": 1, "failure": 0, "failed": 0}
 
     def sample(self, trajectories: list[Trajectory]):
         by_task: dict[str, dict[float, list[Trajectory]]] = defaultdict(lambda: defaultdict(list))
@@ -192,7 +286,7 @@ class QualityPreferenceSampler(EvalSampler):
                     self.dataset_name,
                     [chosen.data_source, chosen.id, rejected.data_source, rejected.id],
                     self.eval_type,
-                    chosen_indices + [-1] + rejected_indices,
+                    [*chosen_indices, -1, *rejected_indices],
                 ),
                 chosen_trajectory=_subset_trajectory(chosen, chosen_indices, self.config),
                 rejected_trajectory=_subset_trajectory(rejected, rejected_indices, self.config),

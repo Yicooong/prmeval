@@ -1,0 +1,30 @@
+sampling:
+  dataset_name: jsonl-synthetic-temporal
+  adapter: jsonl
+  paths: [examples/synthetic_temporal/trajectories.jsonl]
+  max_trajectories: 1
+  eval_types: [synthetic_temporal_robustness]
+  max_frames: 8
+  pad_frames: false
+  progress_type: absolute_first_frame
+  random_seed: 42
+  temporal_robustness:
+    base_frames: 5
+    min_length_ratio: 0.7
+    max_length_ratio: 1.7
+    transforms: [pause, slow, fast, rewind, retry, truncate, skip]
+    variants_per_transform: 3
+
+infer:
+  name: progress_test
+  base_url: BASE_URL
+  api_key: OPENAI_API_KEY
+  model_id: MODEL_ID
+  max_retries: 0
+  temperature: 0
+  max_tokens: 4096
+
+metrics: [synthetic_temporal_robustness]
+output_dir: evaluation_output
+run_name: synthetic-temporal-robustness
+resume: false

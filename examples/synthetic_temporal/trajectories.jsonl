@@ -1,0 +1,1 @@
+{"id":"synthetic-temporal-source","task":"move from the initial state to the completed state","frames":[[[[0,0,0]]],[[[25,25,25]]],[[[50,50,50]]],[[[75,75,75]]],[[[100,100,100]]],[[[125,125,125]]],[[[150,150,150]]],[[[175,175,175]]],[[[200,200,200]]],[[[225,225,225]]]],"data_source":"synthetic-temporal-example","quality_label":"successful","partial_success":1.0}

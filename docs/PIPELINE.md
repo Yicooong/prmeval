@@ -61,6 +61,12 @@ progress = (frame_index - first_index) / (total_frames - first_index - 1)
 NPZ 帧数量 = frame_indices 数量 = target.progress 数量
 ```
 
+`synthetic_temporal_robustness` 先从成功轨迹得到一条基准采样序列，再通过索引映射派生停滞、变速、
+回退、重试、截断和跳帧样本。每个合成帧的 target 都直接查找其原始帧 progress；重复索引复制 target，
+反向索引产生下降 target，不会按新视频的时间位置重新标注。变换类型、参数、基准/最终帧数和长度比例保存在
+input item 的 `synthetic_temporal` metadata 中。默认长度限制为基准帧数的 70%～170%，并继续受
+`sampling.max_frames` 硬上限约束。
+
 图片不会直接写入 JSONL。移动采样产物时，必须整体移动 `samples.jsonl` 和 `sample_frames/`，以保留相对路径及 SHA-256 校验关系。
 
 运行并验证 Stage 1：
@@ -135,6 +141,7 @@ execution.status = success
 | 评测 | 输入 | 指标 |
 |---|---|---|
 | `reward_alignment` | target progress 与 prediction progress | MSE、Pearson |
+| `synthetic_temporal_robustness` | 合成后的逐帧 progress 与 prediction | MAE、趋势、回退、平台、终点、单调性与时间捷径 |
 | `policy_ranking` | 任务内质量排序与预测终态 progress | Kendall |
 | `quality_preference` | chosen/rejected 轨迹偏好 | Accuracy |
 | `confusion_matrix` | 语言任务与视频任务匹配结果 | 混淆矩阵 |

@@ -55,8 +55,37 @@ resume: false
 | `max_frames` | 每个样本最多抽取的帧数 |
 | `pad_frames` | 帧数不足时是否补齐 |
 | `progress_type` | progress 真值的定义方式 |
+| `temporal_robustness` | `synthetic_temporal_robustness` 的基准帧数、变换类型、数量与参数范围 |
 
 相对路径以运行命令时的当前目录为基准。adapter 的目录结构与字段要求见 [本地数据格式与 Dataset Adapter](DATASETS.md)。
+
+### Synthetic temporal robustness
+
+该评测从成功轨迹生成 Original、Pause、Slow、Fast、Rewind、Retry、Truncate 和 Skip。配置示例见
+`configs/eval/synthetic_temporal_robustness.yaml`。核心配置如下：
+
+```yaml
+sampling:
+  eval_types: [synthetic_temporal_robustness]
+  max_frames: 16                 # 变换后的最终硬上限
+  progress_type: absolute_first_frame
+  temporal_robustness:
+    base_frames: 9               # 变换前的基准采样数量
+    min_length_ratio: 0.7
+    max_length_ratio: 1.7
+    transforms: [pause, slow, fast, rewind, retry, truncate, skip]
+    variants_per_transform: 3
+```
+
+`base_frames` 未配置时取 `max(5, floor(max_frames / max_length_ratio))`。合成序列长度始终位于
+`ceil(min_length_ratio × base_frames)` 与
+`min(floor(max_length_ratio × base_frames), max_frames)` 之间。默认最多减少 30%、最多增加 70%。Pause、Rewind
+和 Retry 需要 `base_frames < max_frames`；该评测要求 `max_frames >= 6`，且不支持 `pad_frames` 或
+`relative_first_frame`。
+
+各变换的参数范围可通过 `pause_extra_ratio_range`、`slow_gamma_range`、`fast_gamma_range`、
+`peak_progress_range`、`retreat_ratio_range`、`rewind_extra_ratio_range`、`retry_extra_ratio_range`、
+`truncate_retained_ratio_range` 和 `skip_removed_ratio_range` 调整。所有随机结果由 `random_seed` 稳定决定。
 
 ## `infer`
 

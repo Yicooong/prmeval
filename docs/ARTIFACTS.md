@@ -99,6 +99,7 @@ Preference 类样本通常包含 `chosen` 和 `rejected` 两个 item，各自拥
 - NPZ 文件存在且 SHA-256 与引用一致；
 - 数组键和帧数量正确；
 - progress 真值长度与帧数一致。
+- synthetic temporal 样本允许 `frame_indices` 重复或非单调；索引、帧和 progress target 必须逐项对齐。
 
 因此复制或归档 Stage 1 产物时，必须整体保留 `samples.jsonl` 与 `sample_frames/` 的相对目录结构。
 

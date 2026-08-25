@@ -13,8 +13,8 @@ import numpy as np
 
 from prmeval.cli import build_parser
 from prmeval.cli import main as cli_main
-from prmeval.core.artifacts import load_sample_artifacts, validate_sample_artifacts
-from prmeval.core.config import EvalConfig, InferConfig, SamplingConfig
+from prmeval.core.artifacts import load_sample_artifacts, validate_sample_artifacts, write_sample_artifacts
+from prmeval.core.config import EvalConfig, InferConfig, SamplingConfig, TemporalRobustnessConfig
 from prmeval.core.registry import Registry
 from prmeval.core.runner import Evaluator
 from prmeval.core.schemas import (
@@ -29,7 +29,12 @@ from prmeval.infer.openai import OpenAIChatClient, progress_schema
 from prmeval.metrics.builtins import compute_metrics
 from prmeval.sample.prepare import _uniform_indices, _video_frames
 from prmeval.sample.progress import compute_progress
-from prmeval.sample.samplers import ConfusionMatrixSampler, QualityPreferenceSampler, RewardAlignmentSampler
+from prmeval.sample.samplers import (
+    ConfusionMatrixSampler,
+    QualityPreferenceSampler,
+    RewardAlignmentSampler,
+    SyntheticTemporalRobustnessSampler,
+)
 
 PIXEL = "data:image/jpeg;base64,/9j/2Q=="
 GOLDEN_FIXTURE = Path(__file__).parent / "fixtures" / "rbm_1m_ood_micro.jsonl"
@@ -327,6 +332,120 @@ infer:
         self.assertEqual(len(samples), 1)
         self.assertEqual(samples[0].trajectory.frame_indices, [0, 4, 9])
         self.assertEqual(samples[0].trajectory.target_progress, [0.0, 4 / 9, 1.0])
+
+    def test_temporal_config_resolves_base_frames_and_validates_limits(self):
+        config = SamplingConfig(eval_types=["synthetic_temporal_robustness"], max_frames=8)
+        self.assertEqual(config.temporal_robustness.base_frames, 5)
+        with self.assertRaisesRegex(ValueError, "max_frames >= 6"):
+            SamplingConfig(eval_types=["synthetic_temporal_robustness"], max_frames=5)
+        with self.assertRaisesRegex(ValueError, "absolute progress_type"):
+            SamplingConfig(
+                eval_types=["synthetic_temporal_robustness"],
+                max_frames=8,
+                progress_type="relative_first_frame",
+            )
+        with self.assertRaisesRegex(ValueError, "room to increase"):
+            SamplingConfig(
+                eval_types=["synthetic_temporal_robustness"],
+                max_frames=8,
+                temporal_robustness=TemporalRobustnessConfig(base_frames=8),
+            )
+
+    def test_temporal_sampler_preserves_source_progress_and_length_contract(self):
+        frames = np.arange(20 * 2 * 2 * 3, dtype=np.uint8).reshape(20, 2, 2, 3)
+        trajectory = Trajectory(
+            id="temporal-source",
+            task="task",
+            frames=frames,
+            data_source="fixture",
+            quality_label="successful",
+            partial_success=1.0,
+        )
+        config = SamplingConfig(eval_types=["synthetic_temporal_robustness"], max_frames=8, random_seed=7)
+        first = list(SyntheticTemporalRobustnessSampler(config, "fixture").sample([trajectory]))
+        second = list(SyntheticTemporalRobustnessSampler(config, "fixture").sample([trajectory]))
+        self.assertEqual(len(first), 22)
+        self.assertEqual([sample.sample_id for sample in first], [sample.sample_id for sample in second])
+        self.assertEqual(len({sample.sample_id for sample in first}), 22)
+        by_transform = {}
+        for sample in first:
+            metadata = sample.trajectory.metadata["synthetic_temporal"]
+            by_transform.setdefault(metadata["transform"], []).append(sample)
+            indices = sample.trajectory.frame_indices
+            expected = [index / 19 for index in indices]
+            np.testing.assert_allclose(sample.trajectory.target_progress, expected)
+            self.assertGreaterEqual(len(indices), 4)
+            self.assertLessEqual(len(indices), 8)
+            self.assertEqual(metadata["transformed_frames"], len(indices))
+            self.assertAlmostEqual(metadata["length_ratio"], len(indices) / 5)
+        self.assertEqual(len(by_transform["original"]), 1)
+        for transform in ("pause", "rewind", "retry"):
+            self.assertTrue(all(len(sample.trajectory.frame_indices) > 5 for sample in by_transform[transform]))
+        for transform in ("truncate", "skip"):
+            self.assertTrue(all(len(sample.trajectory.frame_indices) < 5 for sample in by_transform[transform]))
+        for transform in ("slow", "fast"):
+            self.assertTrue(all(len(sample.trajectory.frame_indices) == 5 for sample in by_transform[transform]))
+        self.assertTrue(any(np.diff(sample.trajectory.target_progress).min() < 0 for sample in by_transform["rewind"]))
+        self.assertTrue(any(np.diff(sample.trajectory.target_progress).min() < 0 for sample in by_transform["retry"]))
+        self.assertTrue(any(0 in np.diff(sample.trajectory.target_progress) for sample in by_transform["pause"]))
+        with tempfile.TemporaryDirectory() as tmp:
+            artifact = Path(tmp) / "samples.jsonl"
+            write_sample_artifacts([by_transform["pause"][0], by_transform["rewind"][0]], artifact, "fixture")
+            records = load_sample_artifacts(artifact)
+            self.assertEqual(records[0].input.items[0].frame_indices, by_transform["pause"][0].trajectory.frame_indices)
+            self.assertEqual(records[1].target.values, by_transform["rewind"][0].trajectory.target_progress)
+
+    def test_temporal_metric_reports_events_shortcut_and_frame_statistics(self):
+        records = []
+        cases = [
+            ("original", [0.0, 0.5, 1.0], [0.0, 0.5, 1.0], 3, 3),
+            ("pause", [0.0, 0.5, 0.5, 1.0], [0.0, 0.5, 0.5, 1.0], 3, 4),
+            ("rewind", [0.0, 0.8, 0.4], [0.0, 0.8, 0.4], 3, 3),
+        ]
+        for index, (transform, target, prediction, base_frames, transformed_frames) in enumerate(cases):
+            records.append(
+                EvaluationRecord(
+                    stage="inferred",
+                    sample_id=f"temporal-{index}",
+                    evaluation={"type": "synthetic_temporal_robustness", "dataset": {"name": "fixture"}},
+                    input={
+                        "task": "task",
+                        "items": [
+                            {
+                                "frames": [],
+                                "frame_indices": list(range(len(target))),
+                                "data": {
+                                    "synthetic_temporal": {
+                                        "transform": transform,
+                                        "base_frames": base_frames,
+                                        "transformed_frames": transformed_frames,
+                                        "length_ratio": transformed_frames / base_frames,
+                                    }
+                                },
+                            }
+                        ],
+                    },
+                    target={"kind": "progress", "values": target},
+                    infer={"name": "mock", "model": "mock"},
+                    prediction={"kind": "progress", "values": prediction},
+                    execution={"status": "success"},
+                )
+            )
+        metric = compute_metrics(records, ["synthetic_temporal_robustness"])["synthetic_temporal_robustness"]
+        self.assertEqual(metric["mae"], 0.0)
+        self.assertEqual(metric["trend_accuracy"], 1.0)
+        self.assertEqual(metric["regression"]["recall"], 1.0)
+        self.assertEqual(metric["plateau"]["recall"], 1.0)
+        self.assertEqual(metric["monotonicity_violation"]["edge_rate"], 0.0)
+        self.assertEqual(metric["temporal_shortcut"]["state_mae"], 0.0)
+        self.assertEqual(set(metric["transforms"]), {"original", "pause", "rewind"})
+        self.assertEqual(metric["slices"]["fixture:mock"]["num_samples"], 3)
+        self.assertIsNone(metric["transforms"]["original"]["regression"]["recall"])
+        noisy_plateau = records[1].model_copy(deep=True)
+        noisy_plateau.prediction.values = [0.0, 0.5, 0.54, 1.0]
+        tolerance = compute_metrics([noisy_plateau], ["synthetic_temporal_robustness"])["synthetic_temporal_robustness"]
+        self.assertEqual(tolerance["trend_accuracy"], 1.0)
+        self.assertEqual(tolerance["plateau"]["recall"], 1.0)
 
     def test_pair_and_confusion_sampler_cardinality(self):
         trajectories = [
