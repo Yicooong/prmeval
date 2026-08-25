@@ -327,28 +327,46 @@ infer:
             data_source="fixture",
             quality_label="successful",
         )
-        config = SamplingConfig(max_frames=3, progress_type="absolute_first_frame")
+        config = SamplingConfig(base_frames=3, progress_type="absolute_first_frame")
         samples = list(RewardAlignmentSampler(config, "fixture").sample([trajectory]))
         self.assertEqual(len(samples), 1)
         self.assertEqual(samples[0].trajectory.frame_indices, [0, 4, 9])
         self.assertEqual(samples[0].trajectory.target_progress, [0.0, 4 / 9, 1.0])
 
-    def test_temporal_config_resolves_base_frames_and_validates_limits(self):
-        config = SamplingConfig(eval_types=["synthetic_temporal_robustness"], max_frames=8)
-        self.assertEqual(config.temporal_robustness.base_frames, 5)
+    def test_temporal_config_validates_base_and_max_frame_limits(self):
+        config = SamplingConfig(
+            eval_types=["synthetic_temporal_robustness"],
+            base_frames=5,
+            temporal_robustness=TemporalRobustnessConfig(max_frames=8),
+        )
+        self.assertEqual(config.base_frames, 5)
+        self.assertEqual(config.temporal_robustness.max_frames, 8)
+        with self.assertRaisesRegex(ValueError, "Extra inputs are not permitted"):
+            SamplingConfig(max_frames=8)
         with self.assertRaisesRegex(ValueError, "max_frames >= 6"):
-            SamplingConfig(eval_types=["synthetic_temporal_robustness"], max_frames=5)
+            SamplingConfig(
+                eval_types=["synthetic_temporal_robustness"],
+                base_frames=5,
+                temporal_robustness=TemporalRobustnessConfig(max_frames=5),
+            )
+        with self.assertRaisesRegex(ValueError, "base_frames >= 5"):
+            SamplingConfig(
+                eval_types=["synthetic_temporal_robustness"],
+                base_frames=4,
+                temporal_robustness=TemporalRobustnessConfig(max_frames=8),
+            )
         with self.assertRaisesRegex(ValueError, "absolute progress_type"):
             SamplingConfig(
                 eval_types=["synthetic_temporal_robustness"],
-                max_frames=8,
+                base_frames=5,
+                temporal_robustness=TemporalRobustnessConfig(max_frames=8),
                 progress_type="relative_first_frame",
             )
         with self.assertRaisesRegex(ValueError, "room to increase"):
             SamplingConfig(
                 eval_types=["synthetic_temporal_robustness"],
-                max_frames=8,
-                temporal_robustness=TemporalRobustnessConfig(base_frames=8),
+                base_frames=8,
+                temporal_robustness=TemporalRobustnessConfig(max_frames=8),
             )
 
     def test_temporal_sampler_preserves_source_progress_and_length_contract(self):
@@ -361,7 +379,12 @@ infer:
             quality_label="successful",
             partial_success=1.0,
         )
-        config = SamplingConfig(eval_types=["synthetic_temporal_robustness"], max_frames=8, random_seed=7)
+        config = SamplingConfig(
+            eval_types=["synthetic_temporal_robustness"],
+            base_frames=5,
+            random_seed=7,
+            temporal_robustness=TemporalRobustnessConfig(max_frames=8),
+        )
         first = list(SyntheticTemporalRobustnessSampler(config, "fixture").sample([trajectory]))
         second = list(SyntheticTemporalRobustnessSampler(config, "fixture").sample([trajectory]))
         self.assertEqual(len(first), 22)
@@ -458,7 +481,7 @@ infer:
             )
             for quality in ("failure", "suboptimal", "successful")
         ]
-        pairs = list(QualityPreferenceSampler(SamplingConfig(max_frames=1), "fixture").sample(trajectories))
+        pairs = list(QualityPreferenceSampler(SamplingConfig(base_frames=1), "fixture").sample(trajectories))
         self.assertEqual(len(pairs), 3)
         trajectories.append(
             Trajectory(
@@ -470,7 +493,7 @@ infer:
             )
         )
         confusion = list(
-            ConfusionMatrixSampler(SamplingConfig(max_frames=1, trajectories_per_source=2), "fixture").sample(
+            ConfusionMatrixSampler(SamplingConfig(base_frames=1, trajectories_per_source=2), "fixture").sample(
                 trajectories
             )
         )
@@ -612,7 +635,7 @@ infer:
                         adapter="jsonl",
                         paths=[str(GOLDEN_FIXTURE)],
                         eval_types=["reward_alignment"],
-                        max_frames=3,
+                        base_frames=3,
                     ),
                     infer=InferConfig(
                         name="progress_test",
@@ -644,7 +667,7 @@ infer:
                     adapter="jsonl",
                     paths=[str(GOLDEN_FIXTURE)],
                     eval_types=["reward_alignment"],
-                    max_frames=3,
+                    base_frames=3,
                 ),
                 infer=InferConfig(
                     name="progress_test",
@@ -694,7 +717,7 @@ infer:
                     adapter="jsonl",
                     paths=[str(GOLDEN_FIXTURE)],
                     eval_types=["reward_alignment"],
-                    max_frames=3,
+                    base_frames=3,
                 ),
                 infer=InferConfig(name="progress_test", base_url="http://unused", model_id="unused"),
                 output_dir=tmp,
@@ -724,7 +747,7 @@ infer:
                     adapter="jsonl",
                     paths=[str(GOLDEN_FIXTURE)],
                     eval_types=["reward_alignment"],
-                    max_frames=3,
+                    base_frames=3,
                 ),
                 infer=InferConfig(
                     name="progress_test",
@@ -773,7 +796,7 @@ infer:
                     adapter="jsonl",
                     paths=[str(GOLDEN_FIXTURE)],
                     eval_types=["reward_alignment"],
-                    max_frames=3,
+                    base_frames=3,
                 ),
                 infer=InferConfig(name="progress_test", base_url="http://unused", model_id="unused"),
                 output_dir=tmp,
@@ -795,7 +818,7 @@ infer:
                     adapter="jsonl",
                     paths=[str(GOLDEN_FIXTURE)],
                     eval_types=["reward_alignment"],
-                    max_frames=3,
+                    base_frames=3,
                 ),
                 infer=InferConfig(name="progress_test", base_url="http://service", model_id="mock", max_retries=0),
                 output_dir=tmp,
@@ -817,7 +840,7 @@ infer:
                     adapter="jsonl",
                     paths=[str(GOLDEN_FIXTURE)],
                     eval_types=["reward_alignment"],
-                    max_frames=3,
+                    base_frames=3,
                 ),
                 infer=InferConfig(
                     name="progress_test",

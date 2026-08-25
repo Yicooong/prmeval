@@ -116,7 +116,7 @@ Preference 类样本通常包含 `chosen` 和 `rejected` 两个 item，各自拥
     "dataset_name": "rbm-1m-ood",
     "adapter": "jsonl",
     "eval_types": ["reward_alignment"],
-    "max_frames": 8
+    "base_frames": 8
   },
   "summary": {
     "schema_version": "bench.record.v1",

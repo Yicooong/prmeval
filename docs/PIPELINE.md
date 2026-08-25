@@ -49,7 +49,7 @@ DatasetAdapter
 
 当前 v1 不包含 prefix sampling。一条 `sample_id` 对应一次模型请求和一条完整预测曲线。
 
-对于 `reward_alignment`，采样器选择可用的成功轨迹，按 `max_frames` 均匀抽帧，并使用相同帧索引构造 `target.progress`。默认的 `absolute_first_frame` 定义为：
+对于 `reward_alignment`，采样器选择可用的成功轨迹，按 `base_frames` 均匀抽帧，并使用相同帧索引构造 `target.progress`。默认的 `absolute_first_frame` 定义为：
 
 ```text
 progress = (frame_index - first_index) / (total_frames - first_index - 1)
@@ -65,7 +65,7 @@ NPZ 帧数量 = frame_indices 数量 = target.progress 数量
 回退、重试、截断和跳帧样本。每个合成帧的 target 都直接查找其原始帧 progress；重复索引复制 target，
 反向索引产生下降 target，不会按新视频的时间位置重新标注。变换类型、参数、基准/最终帧数和长度比例保存在
 input item 的 `synthetic_temporal` metadata 中。默认长度限制为基准帧数的 70%～170%，并继续受
-`sampling.max_frames` 硬上限约束。
+`sampling.temporal_robustness.max_frames` 硬上限约束；其中 `sampling.base_frames` 始终表示变换前的采样数量。
 
 图片不会直接写入 JSONL。移动采样产物时，必须整体移动 `samples.jsonl` 和 `sample_frames/`，以保留相对路径及 SHA-256 校验关系。
 
@@ -109,7 +109,7 @@ Progress baseline 的 `predict()` 校验 `ProgressSample`，把 frames、task �
 
 `progress_test` 和 SOLE-R1 在模型实例内部组合 `OpenAIChatClient`，但对 Runner 只暴露普通 `predict()`/`compute_progress()`。模型内部确实需要的 prefix 或 tensor micro-batch 是私有实现细节，不参与 Runner 调度。
 
-Stage 2 不会重新抽帧。模型允许的最大帧数应通过 Stage 1 的 `sampling.max_frames` 设置，使模型输入、target 和 progress prediction 始终一一对应。接口与注册示例见 [Infer 模型接入](INFER_MODELS.md)，连接和模型字段见 [配置文件说明](CONFIGURATION.md#infer)。
+Stage 2 不会重新抽帧。普通采样的模型输入帧数由 Stage 1 的 `sampling.base_frames` 控制；时序鲁棒样本还会受 `sampling.temporal_robustness.max_frames` 的最终硬上限约束。这样模型输入、target 和 progress prediction 始终一一对应。接口与注册示例见 [Infer 模型接入](INFER_MODELS.md)，连接和模型字段见 [配置文件说明](CONFIGURATION.md#infer)。
 
 查看已注册 infer：
 

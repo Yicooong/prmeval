@@ -14,7 +14,7 @@ TemporalTransform = Literal["pause", "slow", "fast", "rewind", "retry", "truncat
 class TemporalRobustnessConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    base_frames: int | None = Field(default=None, ge=5)
+    max_frames: int = Field(default=16, ge=1)
     min_length_ratio: float = Field(default=0.7, ge=0.7, le=1.0)
     max_length_ratio: float = Field(default=1.7, ge=1.0, le=1.7)
     transforms: list[TemporalTransform] = Field(
@@ -65,7 +65,7 @@ class SamplingConfig(BaseModel):
     paths: list[str] = Field(default_factory=list)
     max_trajectories: int | None = Field(default=None, ge=1)
     eval_types: list[str] = Field(default_factory=lambda: ["reward_alignment"])
-    max_frames: int = Field(default=8, ge=1)
+    base_frames: int = Field(default=8, ge=1)
     pad_frames: bool = False
     progress_type: Literal["absolute_first_frame", "absolute_wrt_total_frames", "relative_first_frame"] = (
         "absolute_first_frame"
@@ -84,26 +84,24 @@ class SamplingConfig(BaseModel):
         if "synthetic_temporal_robustness" not in self.eval_types:
             return self
         temporal = self.temporal_robustness
-        if self.max_frames < 6:
-            raise ValueError("synthetic_temporal_robustness requires sampling.max_frames >= 6")
+        if temporal.max_frames < 6:
+            raise ValueError("synthetic_temporal_robustness requires temporal_robustness.max_frames >= 6")
         if self.progress_type == "relative_first_frame":
             raise ValueError("synthetic_temporal_robustness requires an absolute progress_type")
         if self.pad_frames:
             raise ValueError("synthetic_temporal_robustness does not support pad_frames because frame counts vary")
-        base_frames = temporal.base_frames
-        if base_frames is None:
-            base_frames = max(5, int(self.max_frames / temporal.max_length_ratio))
-            temporal.base_frames = base_frames
-        if base_frames > self.max_frames:
-            raise ValueError("temporal_robustness.base_frames must not exceed sampling.max_frames")
+        if self.base_frames < 5:
+            raise ValueError("synthetic_temporal_robustness requires sampling.base_frames >= 5")
+        if self.base_frames > temporal.max_frames:
+            raise ValueError("sampling.base_frames must not exceed temporal_robustness.max_frames")
         increasing = {"pause", "rewind", "retry"}.intersection(temporal.transforms)
-        upper = min(int(temporal.max_length_ratio * base_frames), self.max_frames)
-        if increasing and upper <= base_frames:
-            raise ValueError("pause, rewind, and retry require room to increase beyond temporal_robustness.base_frames")
+        upper = min(int(temporal.max_length_ratio * self.base_frames), temporal.max_frames)
+        if increasing and upper <= self.base_frames:
+            raise ValueError("pause, rewind, and retry require room to increase beyond sampling.base_frames")
         decreasing = {"truncate", "skip"}.intersection(temporal.transforms)
-        lower = math.ceil(temporal.min_length_ratio * base_frames)
-        if decreasing and lower >= base_frames:
-            raise ValueError("truncate and skip require room to decrease below temporal_robustness.base_frames")
+        lower = math.ceil(temporal.min_length_ratio * self.base_frames)
+        if decreasing and lower >= self.base_frames:
+            raise ValueError("truncate and skip require room to decrease below sampling.base_frames")
         return self
 
 

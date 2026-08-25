@@ -115,7 +115,7 @@ class InferEntryPointTest(unittest.TestCase):
                     adapter="jsonl",
                     paths=[str(dataset_path)],
                     eval_types=["reward_alignment"],
-                    max_frames=3,
+                    base_frames=3,
                 ),
                 infer=InferConfig(
                     name="unit_progress",

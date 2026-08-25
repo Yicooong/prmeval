@@ -4,7 +4,7 @@ sampling:
   paths: [examples/stage_1_smoke/trajectories.jsonl]
   max_trajectories: 1
   eval_types: [reward_alignment]
-  max_frames: 3
+  base_frames: 3
   pad_frames: false
   progress_type: absolute_first_frame
 

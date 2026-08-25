@@ -29,13 +29,13 @@ def _subset_trajectory(traj: Trajectory, indices: list[int], config: SamplingCon
     total = len(frames)
     selected = frames[indices]
     target = compute_progress(total, indices, config.progress_type, partial_success=traj.partial_success)
-    if len(selected) > config.max_frames:
-        local = linspace_indices(len(selected), config.max_frames)
+    if len(selected) > config.base_frames:
+        local = linspace_indices(len(selected), config.base_frames)
         selected = selected[local]
         indices = [indices[i] for i in local]
         target = [target[i] for i in local]
-    if config.pad_frames and 0 < len(selected) < config.max_frames:
-        amount = config.max_frames - len(selected)
+    if config.pad_frames and 0 < len(selected) < config.base_frames:
+        amount = config.base_frames - len(selected)
         selected = np.concatenate([selected, np.repeat(selected[-1:], amount, axis=0)], axis=0)
         target.extend([target[-1]] * amount)
     return traj.model_copy(
@@ -88,9 +88,7 @@ class SyntheticTemporalRobustnessSampler(EvalSampler):
 
     def sample(self, trajectories: list[Trajectory]):
         temporal = self.config.temporal_robustness
-        if temporal.base_frames is None:  # SamplingConfig resolves this when the eval type is enabled.
-            raise ValueError("temporal_robustness.base_frames was not resolved")
-        base_count = temporal.base_frames
+        base_count = self.config.base_frames
         for trajectory in trajectories:
             if trajectory.quality_label not in (None, "successful"):
                 continue
@@ -117,7 +115,7 @@ class SyntheticTemporalRobustnessSampler(EvalSampler):
                     transform,
                     str(variant),
                 )
-                indices, params = transform_indices(base_indices, transform, rng, temporal, self.config.max_frames)
+                indices, params = transform_indices(base_indices, transform, rng, temporal)
                 target = [source_progress[index] for index in indices]
                 metadata = {
                     **trajectory.metadata,

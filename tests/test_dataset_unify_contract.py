@@ -114,7 +114,7 @@ class DatasetUnifyContractTest(unittest.TestCase):
         self.assertEqual(trajectories[0].data_source, dataset_name)
         self.assertEqual(trajectories[0].frames, str(dataset_root / relative_video_path))
 
-        sampler = RewardAlignmentSampler(SamplingConfig(max_frames=2), dataset_name)
+        sampler = RewardAlignmentSampler(SamplingConfig(base_frames=2), dataset_name)
         samples = list(sampler.sample(trajectories))
         self.assertEqual(len(samples), 1)
         self.assertTrue(samples[0].trajectory.is_robot)

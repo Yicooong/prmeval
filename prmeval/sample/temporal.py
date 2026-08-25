@@ -10,9 +10,9 @@ import numpy as np
 from ..core.config import TemporalRobustnessConfig
 
 
-def length_bounds(base_frames: int, max_frames: int, config: TemporalRobustnessConfig) -> tuple[int, int]:
+def length_bounds(base_frames: int, config: TemporalRobustnessConfig) -> tuple[int, int]:
     lower = math.ceil(config.min_length_ratio * base_frames)
-    upper = min(math.floor(config.max_length_ratio * base_frames), max_frames)
+    upper = min(math.floor(config.max_length_ratio * base_frames), config.max_frames)
     return lower, upper
 
 
@@ -41,10 +41,9 @@ def transform_indices(
     transform: str,
     rng: random.Random,
     config: TemporalRobustnessConfig,
-    max_frames: int,
 ) -> tuple[list[int], dict[str, Any]]:
     base = len(base_indices)
-    lower, upper = length_bounds(base, max_frames, config)
+    lower, upper = length_bounds(base, config)
     params: dict[str, Any] = {}
 
     if transform == "original":

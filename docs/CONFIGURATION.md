@@ -9,7 +9,7 @@ sampling:
   paths: [examples/stage_1_smoke/trajectories.jsonl]
   max_trajectories: 1
   eval_types: [reward_alignment]
-  max_frames: 3
+  base_frames: 3
   pad_frames: false
   progress_type: absolute_first_frame
 
@@ -52,10 +52,10 @@ resume: false
 | `paths` | 一个或多个本地数据路径 |
 | `max_trajectories` | 最多读取的轨迹数 |
 | `eval_types` | 需要构造的评测类型 |
-| `max_frames` | 每个样本最多抽取的帧数 |
+| `base_frames` | 基准采样帧数；`reward_alignment` 等普通采样直接按此数量抽帧 |
 | `pad_frames` | 帧数不足时是否补齐 |
 | `progress_type` | progress 真值的定义方式 |
-| `temporal_robustness` | `synthetic_temporal_robustness` 的基准帧数、变换类型、数量与参数范围 |
+| `temporal_robustness` | `synthetic_temporal_robustness` 的最终帧数上限、变换类型、数量与参数范围 |
 
 相对路径以运行命令时的当前目录为基准。adapter 的目录结构与字段要求见 [本地数据格式与 Dataset Adapter](DATASETS.md)。
 
@@ -67,20 +67,20 @@ resume: false
 ```yaml
 sampling:
   eval_types: [synthetic_temporal_robustness]
-  max_frames: 16                 # 变换后的最终硬上限
+  base_frames: 9                # 变换前的基准采样数量
   progress_type: absolute_first_frame
   temporal_robustness:
-    base_frames: 9               # 变换前的基准采样数量
+    max_frames: 16              # 变换后的最终硬上限
     min_length_ratio: 0.7
     max_length_ratio: 1.7
     transforms: [pause, slow, fast, rewind, retry, truncate, skip]
     variants_per_transform: 3
 ```
 
-`base_frames` 未配置时取 `max(5, floor(max_frames / max_length_ratio))`。合成序列长度始终位于
+`sampling.base_frames` 表示变换前的采样数量，`sampling.temporal_robustness.max_frames` 表示变换后的最终硬上限。合成序列长度始终位于
 `ceil(min_length_ratio × base_frames)` 与
 `min(floor(max_length_ratio × base_frames), max_frames)` 之间。默认最多减少 30%、最多增加 70%。Pause、Rewind
-和 Retry 需要 `base_frames < max_frames`；该评测要求 `max_frames >= 6`，且不支持 `pad_frames` 或
+和 Retry 需要 `base_frames < max_frames`；该评测要求 `base_frames >= 5`、`temporal_robustness.max_frames >= 6`，且不支持 `pad_frames` 或
 `relative_first_frame`。
 
 各变换的参数范围可通过 `pause_extra_ratio_range`、`slow_gamma_range`、`fast_gamma_range`、
