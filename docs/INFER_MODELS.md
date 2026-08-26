@@ -1,6 +1,6 @@
 # Infer 模型接入
 
-Stage 2 只保留一个抽象父类 `Infer`。框架不区分 local 和 remote；checkpoint、provider 或 HTTP 服务由具体 baseline 自己决定。Runner 根据 `infer.name` 从 `INFERS` 取出类，构造一次后按记录顺序调用 `predict()`。
+Stage 2 只保留一个抽象父类 `Infer`。框架不区分 local 和 remote；checkpoint、provider 或 HTTP 服务由具体 baseline 自己决定。Runner 根据 `infer.name` 从 `INFERS` 取出类并构造一次。单样本入口是 `predict()`，需要后端批处理的 baseline 可以选择覆写 `predict_batch()`。
 
 ## Progress baseline
 
@@ -44,7 +44,7 @@ class MyModel(Infer):
     ) -> np.ndarray:
         return self._run_model(frames_array, task_description, reference_video_path)
 
-    def predict(self, sample: EvaluationSample) -> Prediction:
+    def predict(self, samples: List[EvaluationSample]) -> List[Prediction]:
         return predict_progress(self, sample)
 ```
 
@@ -89,9 +89,21 @@ infer:
 
 框架不根据字段选择运行模式。具体 baseline 负责校验自己需要的字段：checkpoint 模型通常要求 `model_path`，OpenAI-compatible 模型通常要求 `base_url` 和 `model_id`，provider 模型读取自身的 API key/options。
 
+## 可选批量入口
+
+默认的 `Infer.predict_batch()` 会逐条调用 `predict()`。Runner 会识别 baseline 是否覆写了该方法：未覆写时继续逐条执行并隔离单样本错误；覆写后则按 `infer.batch_size` 一次传入一批：
+
+```python
+def predict_batch(self, samples: list[EvaluationSample]) -> list[Prediction]:
+    return self._backend_batch(samples)
+```
+
+返回结果可以调整顺序，但必须与输入具有完全相同且不重复的 `sample_id`。整批调用抛出异常，或返回数量、ID
+集合不合法时，该批所有样本记为失败，后续批次继续执行。sample 迭代器没有第二个 batch size。
+
 ## 调度与依赖约束
 
-Runner 始终顺序逐样本执行 `infer.predict(sample)`。不存在公共批量预测接口、线程池、样本分组或整体失败语义；单个样本失败只写入该样本的 `errors.jsonl`，其他样本继续运行。模型内部为了 tensor/prefix 计算使用的批处理应保留为私有 helper，不成为框架接口。
+Runner 不提供线程池或 local/remote 执行分派。默认路径顺序逐样本执行 `infer.predict(sample)`；可选批量路径按配置分组并调用 `infer.predict_batch(samples)`。
 
 Torch、Transformers、OpenCV、evo_vlac 等可选依赖不得阻塞 `import prmeval.infer`。应在具体模型构造时导入，或使用安全的可选依赖检查。
 

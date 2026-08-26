@@ -1,3 +1,0 @@
-{"id":"gold-success","task":"place the cup on the plate","frames":["data:image/jpeg;base64,/9j/2Q==","data:image/jpeg;base64,/9j/2Q==","data:image/jpeg;base64,/9j/2Q=="],"data_source":"rbm-1m-ood-fixture","quality_label":"successful","partial_success":1.0}
-{"id":"gold-failure","task":"place the cup on the plate","frames":["data:image/jpeg;base64,/9j/2Q==","data:image/jpeg;base64,/9j/2Q=="],"data_source":"rbm-1m-ood-fixture","quality_label":"failure","partial_success":0.25}
-

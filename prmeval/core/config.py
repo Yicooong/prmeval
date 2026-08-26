@@ -118,6 +118,7 @@ class InferConfig(BaseModel):
     max_retries: int = Field(default=5, ge=0)
     temperature: float = 0.0
     max_tokens: int = 1024
+    batch_size: int = Field(default=1, ge=1)
     headers: dict[str, str] = Field(default_factory=dict)
     options: dict[str, Any] = Field(default_factory=dict)
 
@@ -144,6 +145,7 @@ class EvalConfig(BaseModel):
     sampling: SamplingConfig = Field(default_factory=SamplingConfig)
     infer: InferConfig
     metrics: list[str] = Field(default_factory=list)
+    mode: Literal["separate", "continue"] = "separate"
     output_dir: str = "evaluation_output"
     run_name: str | None = None
     resume: bool = True

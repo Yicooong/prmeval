@@ -941,7 +941,7 @@ class RBM(PredictionHeadsMixin, PreTrainedModel):
 
     def _apply_heads_to_hidden_states(
         self, hidden_states_list: list[torch.Tensor]
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[list[torch.Tensor], list[torch.Tensor]]:
         """
         Apply progress and success heads to a list of hidden states.
 
@@ -967,9 +967,7 @@ class RBM(PredictionHeadsMixin, PreTrainedModel):
                 progress_list.append(torch.empty(0, device=hidden.device))
                 success_list.append(torch.empty(0, device=hidden.device))
 
-        progress = torch.stack(progress_list) if progress_list else None
-        success = torch.stack(success_list) if success_list else None
-        return progress, success
+        return progress_list, success_list
 
     def _process_token_extraction(
         self,

@@ -122,6 +122,17 @@ def sample_to_record(sample: EvaluationSample, dataset_name: str) -> EvaluationR
     )
 
 
+def strip_record_frames(record: EvaluationRecord) -> EvaluationRecord:
+    """Return a JSON-safe record without runtime frame arrays or disk frame references."""
+    # 如果frames是字符串，保留原样，否则去除
+    items = [
+        item if isinstance(item.frames, str)
+        else item.model_copy(update={"frames": []})
+        for item in record.input.items
+    ]
+    return record.model_copy(update={"input": record.input.model_copy(update={"items": items})})
+
+
 def _materialize_item(item: RecordInputItem, sample_id: str, bundle_dir: Path) -> RecordInputItem:
     frames = load_frames(item.frames)
     if len(frames) == 0:

@@ -287,28 +287,154 @@ class RBMModel(Infer):
 
         return results[0]
 
-    def predict(self, sample: EvaluationSample) -> Prediction:
-        if not isinstance(sample, ProgressSample):
+    def compute_batch_progress(
+        self,
+        frames_array: List[np.ndarray],
+        task_description: List[str],
+        reference_video_path: List[str],
+    ) -> list[List[float]]:
+        """Compute progress prediction for a trajectory.
+
+        Args:
+            frames_array: List of frames 
+            task_description: Task description text
+
+        Returns:
+            List of List of progress values (0-1) for each frame
+        """
+        if frames_array is None:
+            return [[]]
+        
+        all_messages = []
+
+        for frame_array in frames_array:
+            
+            frames_pil = convert_frames_to_pil_images(frame_array)
+
+            video_field, content_extras = self._prepare_frames_for_conversation(frames_pil, prefix="tmp_progress")
+
+            prompt = f"The task for the robot is '{task_description}'. Given the trajectory video, predict the task progress at each frame, how far along the robot is towards completing the task, a float between 0 and 1, where 0 is the starting state and 1 is when the task is completed. If the robot is not performing the same task, predict 0 progress."
+            # Build content list
+            content_list = [{"type": "text", "text": prompt}]
+            self._add_vision_content_to_list(content_list, video_field, content_extras)
+
+            message = [
+                {
+                    "role": "user",
+                    "content": content_list,
+                }
+            ]
+            all_messages.append(message)
+        
+        text = [
+            self.processor.apply_chat_template(
+                    message,
+                    tokenize=False,
+                    add_generation_prompt=False,
+                    add_vision_id=True,
+                    enable_thinking=False,
+                    fps=1,
+                ) 
+            for message in all_messages
+        ]
+
+        image_inputs, video_inputs, video_kwargs = process_vision_info(
+                all_messages,
+                image_patch_size=16,
+                return_video_kwargs=True,
+                return_video_metadata=True,
+            )
+        # Split videos and metadata (video_inputs is list of (video, video_metadata) tuples)
+        if video_inputs is not None:
+            videos, video_metadatas = zip(*video_inputs, strict=True)
+            videos, video_metadatas = list(videos), list(video_metadatas)
+        else:
+            videos = None
+            video_metadatas = None
+
+        inputs = self.processor(
+                text=text,
+                images=image_inputs,
+                videos=videos,
+                video_metadata=video_metadatas,
+                padding=True,
+                return_tensors="pt",
+                do_resize=False,  # qwen-vl-utils already resized
+                **video_kwargs,
+            )
+
+        inputs = {
+            k: v.to(self.device) if isinstance(v, torch.Tensor) else v for k, v in inputs.items()
+        }
+
+    
+
+        # Faster than torch.no_grad() for inference-only code
+        with torch.inference_mode(): 
+            model_output, _ = self.model(
+                    **inputs,
+                    sample_type="progress",
+                    max_new_tokens=self.max_new_tokens,
+                    do_sample=False,  # Deterministic
+                )
+
+        # Extract progress logits
+        progress_logits = model_output.progress_logits
+        if progress_logits is None:
+            raise ValueError("No progress logits returned from model")
+
+        # Handle different output formats
+        if isinstance(progress_logits, dict):
+            # RBM format: {"A": tensor, "B": None}
+            progress_tensor = progress_logits.get("A")
+        else:
+            # Direct tensor
+            progress_tensor = progress_logits
+
+        if progress_tensor is None:
+            raise ValueError("No progress logits in 'A' key")
+        batch_size = len(progress_tensor)
+        results = []
+
+        for i in range(batch_size):
+        
+            progress_values = convert_bins_to_continuous(progress_tensor[i]).cpu().tolist()
+            # Ensure we have the right length
+            if isinstance(progress_values, float):
+                progress_values = [progress_values]
+
+            results.append(progress_values)
+
+        return results
+
+    def predict(self, samples: List[EvaluationSample]) -> List[Prediction]:
+
+        result = []
+      
+        if not isinstance(samples[0], ProgressSample):
             raise TypeError(f"{self.config.name} only supports progress samples")
-        reference_path = sample.trajectory.metadata.get("reference_video_path")
-        values = np.asarray(
-            self.compute_progress(
-                np.asarray(sample.trajectory.frames),
-                sample.trajectory.task,
-                str(reference_path) if reference_path else None,
-            ),
-            dtype=float,
-        ).reshape(-1)
-        expected = len(sample.trajectory.frames)
-        if len(values) != expected:
-            raise ValueError(f"Progress length mismatch: expected {expected}, got {len(values)}")
-        if not np.isfinite(values).all():
-            raise ValueError("Progress values must be finite")
-        if ((values < 0) | (values > 1)).any():
-            raise ValueError("Progress values must be in [0, 1]")
-        return ProgressPrediction(
-            sample_id=sample.sample_id,
-            progress=values.tolist(),
-            model=self.config.model_id or self.config.model_path or self.config.name,
-            model_version=self.config.model_version,
+        reference_paths = [sample.trajectory.metadata.get("reference_video_path") for sample in samples]
+        values = self.compute_batch_progress(
+                    [np.asarray(sample.trajectory.frames) for sample in samples],
+                    [sample.trajectory.task for sample in samples],
+                    [str(reference_path) if reference_path else None for reference_path in reference_paths],
         )
+          
+        if len(values) != len(samples):
+            raise ValueError("input length must same as output")
+        for value, sample in zip(values, samples):
+            expected = len(sample.trajectory.frames)
+            if len(value) != expected:
+                raise ValueError(f"Progress length mismatch: expected {expected}, got {len(value)}")
+            if not np.isfinite(value).all():
+                raise ValueError("Progress values must be finite")
+            
+            result.append(
+                ProgressPrediction(
+                sample_id=sample.sample_id,
+                progress=value,
+                model=self.config.model_id or self.config.model_path or self.config.name,
+                model_version=self.config.model_version,
+                )
+            )
+        return result 

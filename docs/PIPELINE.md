@@ -218,6 +218,16 @@ evaluation_output/<run_name>/
 python -m prmeval.cli run --config configs/eval/progress_test_remote.yaml
 ```
 
+顶层 `mode` 控制 `run` 如何连接三个阶段：
+
+- `separate`（默认）依次生成并读取 `samples.jsonl` 与 `sample_frames/*.npz`，适合阶段解耦和移动产物；
+- `continue` 从 sampler 迭代器按 `infer.batch_size` 取样本并直接推理，不生成 sample JSONL、sample manifest 或 NPZ。
+
+连续模式的帧数组只存在于当前推理批次的内存中。写入 predictions/errors 前，Runner 会把
+`input.items[].frames` 置为空列表；frame indices、总帧数、target、source 和 metadata 仍会保留。连续模式仍将预测、错误、
+manifest 和 metrics 写到运行目录，`resume: true` 时重新生成稳定 sample ID 并跳过已有成功预测。单独执行
+`sample`、`infer` 或 `metrics` 不受 `mode` 影响，始终使用磁盘阶段协议。
+
 CLI 默认向 stderr 输出阶段日志，并在交互式终端中展示各阶段进度：Stage 1 统计读取轨迹、生成样本和写入样本，Stage 2 统计已完成的推理样本，Stage 3 统计已计算的指标。断点续跑时，Stage 2 会同时报告待处理和已跳过的样本数。使用 `--no-progress` 可以关闭动态进度条；普通阶段日志不受影响。非交互式 stderr（例如 CI 或输出重定向）会自动禁用动态条，避免产生重复控制字符。
 
 进度和日志使用 stderr，最终 JSON 摘要使用 stdout。例如下面的命令只将摘要写入文件：

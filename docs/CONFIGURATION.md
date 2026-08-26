@@ -25,6 +25,7 @@ infer:
   options: {}
 
 metrics: [reward_alignment]
+mode: separate
 output_dir: evaluation_output
 run_name: jsonl-progress-full-smoke
 resume: false
@@ -37,6 +38,7 @@ resume: false
 | `sampling` | Stage 1 | 数据源、adapter、采样类型、轨迹与帧数限制 |
 | `infer` | Stage 2 | baseline 名称、模型/连接信息和扩展参数 |
 | `metrics` | Stage 3 | 需要计算的指标名称列表 |
+| `mode` | `run` 编排 | `separate` 使用磁盘阶段产物；`continue` 在内存中连接采样与推理 |
 | `output_dir` | 全阶段 | 所有 run 的根目录 |
 | `run_name` | 全阶段 | 当前 run 的目录名称 |
 | `resume` | Stage 1/2 | 是否复用兼容产物并跳过已成功样本 |
@@ -101,10 +103,13 @@ sampling:
 | `max_retries` | 请求或响应解析失败后的最大重试次数 |
 | `temperature` | 生成温度 |
 | `max_tokens` | 单次响应的最大 token 数 |
+| `batch_size` | Runner 每次从 sample 迭代器消费并调度的样本数，默认 `1` |
 | `headers` | 附加 HTTP header |
 | `options` | 传给具体 baseline 的扩展配置 |
 
-框架不区分 local/remote，也不存在 `mode`、`transport`、`batch_size` 或 `max_concurrency`。Runner 直接构造 `INFERS.get(name)` 返回的类，并顺序逐样本调用 `predict()`。模型使用 checkpoint、provider SDK 或 HTTP client 由自身实现决定。
+框架不区分 local/remote，也不存在 transport 或 max_concurrency 分派。Runner 直接构造
+`INFERS.get(name)` 返回的类。未实现 `predict_batch()` 的 baseline 仍逐样本调用 `predict()`；实现该可选接口后，Runner
+会把最多 `infer.batch_size` 个样本一次传入。模型使用 checkpoint、provider SDK 或 HTTP client 由自身实现决定。
 
 配置示例：
 
@@ -162,5 +167,9 @@ python -m prmeval.cli list-metrics
 ## 输出目录与续跑
 
 产物写入 `<output_dir>/<run_name>/`。`resume: true` 时，Stage 1 根据 sampling 指纹复用样本；Stage 2 跳过已成功的 `sample_id`，失败样本会在下次运行时逐个重试。配置指纹不兼容时框架拒绝混写。详见 [三阶段评测流程](PIPELINE.md#运行产物与断点续跑)。
+
+`mode: continue` 只影响 `run` 命令。它不生成 `samples.jsonl`、`sample_manifest.json` 或 `sample_frames/*.npz`；
+sample 迭代器没有独立 batch 配置，而是由 `infer.batch_size` 分批消费。独立运行 `sample`、`infer`、`metrics`
+时始终使用可移植的磁盘阶段协议。连续模式仍写 predictions、errors 和最终指标，以便审计及按 sample ID 续跑。
 
 不要提交真实 API Key、私有服务地址、生成数据或 `evaluation_output/`。

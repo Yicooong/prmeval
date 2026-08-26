@@ -7,7 +7,7 @@ import random
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from collections.abc import Iterable
-from typing import ClassVar
+from typing import ClassVar, TypeVar
 
 import numpy as np
 
@@ -17,6 +17,10 @@ from ..core.schemas import PreferenceSample, ProgressSample, Trajectory
 from .adapters import load_frames
 from .progress import compute_progress, linspace_indices
 from .temporal import transform_indices
+import logging
+
+logger = logging.getLogger(__name__)
+T = TypeVar("T")
 
 
 def stable_sample_id(dataset: str, trajectory_ids: list[str], eval_type: str, indices: list[int]) -> str:
@@ -65,7 +69,13 @@ class RewardAlignmentSampler(EvalSampler):
     eval_type = "reward_alignment"
 
     def sample(self, trajectories: list[Trajectory]):
-        source = [t for t in trajectories if t.quality_label in (None, "successful")]
+       
+        source = [
+            t for t in trajectories
+            if t.quality_label in (None, "successful")
+            and (t.partial_success is None or np.isclose(t.partial_success, 1.0))
+        ]
+        logger.info(f"总共采样到{len(source)}条成功轨迹")
         for traj in source:
             total = len(load_frames(traj.frames))
             indices = list(range(total))
@@ -89,11 +99,13 @@ class SyntheticTemporalRobustnessSampler(EvalSampler):
     def sample(self, trajectories: list[Trajectory]):
         temporal = self.config.temporal_robustness
         base_count = self.config.base_frames
+        trajectories = [
+            t for t in trajectories
+            if t.quality_label in (None, "successful")
+            and (t.partial_success is None or np.isclose(t.partial_success, 1.0))
+        ]
+        logger.info(f"总共采样到{len(trajectories) * temporal.variants_per_transform * len(temporal.transforms)}条成功轨迹")
         for trajectory in trajectories:
-            if trajectory.quality_label not in (None, "successful"):
-                continue
-            if trajectory.partial_success is not None and not np.isclose(trajectory.partial_success, 1.0):
-                continue
             frames = load_frames(trajectory.frames)
             total = len(frames)
             if total < base_count:

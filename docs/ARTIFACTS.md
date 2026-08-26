@@ -37,6 +37,9 @@ evaluation_output/<run_name>/
 
 `errors.jsonl`、`predictions.jsonl` 和 Stage 3 产物是否存在取决于实际结果。例如全部推理成功时可能没有 `errors.jsonl`；全部推理失败时没有可供 Stage 3 使用的成功预测，因此不会生成指标产物。
 
+该目录树对应默认的 `mode: separate`。使用 `mode: continue` 执行 `run` 时，不会生成
+`samples.jsonl`、`sample_manifest.json` 和 `sample_frames/`；其余推理与指标产物仍会写入运行目录。
+
 ## 阶段与产物关系
 
 | 阶段 | 读取 | 写入 | 用途 |
@@ -135,6 +138,9 @@ Preference 类样本通常包含 `chosen` 和 `rejected` 两个 item，各自拥
 ## Stage 2 产物
 
 ### `predictions.jsonl`
+
+`separate` 模式保留 Stage 1 的 NPZ 引用。`continue` 模式在写入前将 `input.items[].frames` 清为空列表，
+因此任何 NumPy 帧数组都不会进入 JSON；采样索引、帧总数、target、source 和 metadata 仍保留。
 
 只保存推理成功的记录。每行仍是同一个 `EvaluationRecord`，并保持 Stage 1 的 `sample_id`、`evaluation`、`input` 和 `target` 不变，同时增加：
 
