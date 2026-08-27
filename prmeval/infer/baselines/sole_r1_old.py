@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 import re
-from typing import Any, ClassVar
+from typing import Any, ClassVar, List
 
 import numpy as np
 
@@ -25,8 +25,8 @@ ANSWER_RE = re.compile(
 )
 
 
-@register_infer("sole_r1")
-class SoleR1(Infer):
+@register_infer("sole_r1_old")
+class SoleR1Old(Infer):
     """Remote-only SOLE-R1 progress inference over Stage 1 frame sequences."""
 
     capabilities: ClassVar[set[str]] = {"progress"}
@@ -140,7 +140,8 @@ class SoleR1(Infer):
             percentages.append(progress)
         return np.asarray(percentages, dtype=np.float64) / 100.0
 
-    def predict(self, sample: EvaluationSample) -> Prediction:
+    def predict(self, samples: List[EvaluationSample]) -> List[Prediction]:
+        sample = samples[0]
         if not isinstance(sample, ProgressSample):
             raise TypeError(f"{self.config.name} only supports progress samples")
         reference_path = sample.trajectory.metadata.get("reference_video_path")
@@ -159,12 +160,12 @@ class SoleR1(Infer):
             raise ValueError("Progress values must be finite")
         if ((values < 0) | (values > 1)).any():
             raise ValueError("Progress values must be in [0, 1]")
-        return ProgressPrediction(
+        return [ProgressPrediction(
             sample_id=sample.sample_id,
             progress=values.tolist(),
             model=self.config.model_id or self.config.model_path or self.config.name,
             model_version=self.config.model_version,
-        )
+        )]
 
     def begin_prediction(self) -> None:
         self.client.begin_prediction()

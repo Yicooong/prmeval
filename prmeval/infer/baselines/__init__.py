@@ -6,7 +6,7 @@ from .rbm_model import RBMModel
 from .rlvlmf import RLVLMF
 from .robodopamine import RoboDopamine
 from .roboreward import RoboReward
-from .sole_r1 import SoleR1
+from .sole_r1_model import SoleR1
 from .topreward import TopReward
 from .vlac import VLAC
 
