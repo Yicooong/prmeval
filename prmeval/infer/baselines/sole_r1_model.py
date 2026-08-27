@@ -28,11 +28,11 @@ class SoleR1(Infer):
         
         self.from_zero = bool(config.options.get("from_zero", False))
         self.temperature = float(config.options.get("temperature", 1.0))
-        self.client = InferenceServer(config.model_path, config)
+        self.server = InferenceServer(config.model_path, config)
 
 
     def call(self, payload: dict) -> dict | None:
-        return self.client.callback(payload)
+        return self.server.callback(payload)
 
     def compute_batch_progress(
         self,
