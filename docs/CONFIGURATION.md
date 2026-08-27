@@ -120,7 +120,7 @@ infer:
   model_path: /models/topreward
   model_id: topreward-v1
   options:
-    num_prefix_samples: 15
+    use_prefix_samples: True
 
 # OpenAI-compatible baseline
 infer:

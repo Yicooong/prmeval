@@ -19,7 +19,7 @@ import shutil
 import tempfile
 import uuid
 from pathlib import Path
-from typing import ClassVar
+from typing import ClassVar, List
 
 import numpy as np
 from PIL import Image
@@ -125,8 +125,8 @@ class RoboReward(Infer):
         self._initialize(
             model_path=config.model_path,
             max_new_tokens=int(options.get("max_new_tokens", 128)),
-            use_unsloth=bool(options.get("use_unsloth", True)),
-            num_prefix_samples=int(options.get("num_prefix_samples", -1))
+            use_unsloth=bool(options.get("use_unsloth", False)),
+            use_prefix_samples=bool(options.get("use_prefix_samples", False))
         )
 
     capabilities: ClassVar[set[str]] = {"progress"}
@@ -136,8 +136,8 @@ class RoboReward(Infer):
         self,
         model_path: str = "teetone/RoboReward-8B",
         max_new_tokens: int = 128,
-        use_unsloth: bool = True,
-        num_prefix_samples: int = -1
+        use_unsloth: bool = False,
+        use_prefix_samples: bool = False
     ):
         """
         Initialize RoboReward model.
@@ -189,7 +189,7 @@ class RoboReward(Infer):
         )
         self.max_new_tokens = max_new_tokens
         self.model_path = model_path
-        self.num_prefix_samples = num_prefix_samples
+        self.use_prefix_samples = use_prefix_samples
 
         print(f"RoboReward model loaded on device: {self.model.device}")
 
@@ -262,7 +262,7 @@ Task: {task_description}"""
             List of discrete scores (1.0-5.0) for each frame.
             All frames get the same discrete score (end-of-episode score for this subsequence).
         """
-        del reference_video_path
+   
         if frames_array is None or frames_array.size == 0:
             return []
 
@@ -280,9 +280,9 @@ Task: {task_description}"""
             # Duplicate the single frame to make it 2 frames
             frames_pil = [frames_pil[0], frames_pil[0]]
             num_frames = 2
-        # self.num_prefix_samples need include start and end 
-        if self.num_prefix_samples > 1 and num_frames > 2:
-            num_samples = min(self.num_prefix_samples, num_frames)
+    
+        if self.use_prefix_samples and num_frames > 2:
+            num_samples = num_frames
             prefix_lengths = np.linspace(1, num_frames, num_samples, dtype=int)
             prefix_lengths = sorted({int(x) for x in prefix_lengths})
         else:
@@ -398,28 +398,192 @@ Task: {task_description}"""
 
         return np.clip(progress.astype(np.float64), 0.0, 1.0).tolist()
 
-    def predict(self, sample: EvaluationSample) -> Prediction:
-        if not isinstance(sample, ProgressSample):
-            raise TypeError(f"{self.config.name} only supports progress samples")
-        reference_path = sample.trajectory.metadata.get("reference_video_path")
-        values = np.asarray(
-            self.compute_progress(
-                np.asarray(sample.trajectory.frames),
-                sample.trajectory.task,
-                str(reference_path) if reference_path else None,
-            ),
-            dtype=float,
-        ).reshape(-1)
-        expected = len(sample.trajectory.frames)
-        if len(values) != expected:
-            raise ValueError(f"Progress length mismatch: expected {expected}, got {len(values)}")
-        if not np.isfinite(values).all():
-            raise ValueError("Progress values must be finite")
-        if ((values < 0) | (values > 1)).any():
-            raise ValueError("Progress values must be in [0, 1]")
-        return ProgressPrediction(
-            sample_id=sample.sample_id,
-            progress=values.tolist(),
-            model=self.config.model_id or self.config.model_path or self.config.name,
-            model_version=self.config.model_version,
+  
+    def compute_progress_with_prefix(
+        self,
+        frames_array: np.ndarray,
+        task_description: str = "",
+        reference_video_path: str | None = None,
+    ) -> list[float | None]:
+        """
+        Compute progress prediction for a frame sequence using RoboReward baseline.
+
+        RoboReward predicts a discrete score (1-5) for the end-of-episode state.
+        Since the sampler already uses use_frame_steps to create progressively longer
+        sequences, we just process the single sequence provided here.
+
+        Args:
+            frames_array: (N, H, W, 3) uint8 array from trajectory frames (already a subsequence)
+            task_description: Task description text
+
+        Returns:
+            List of discrete scores (1.0-5.0) for each frame.
+            All frames get the same discrete score (end-of-episode score for this subsequence).
+        """
+   
+        if frames_array is None or frames_array.size == 0:
+            return []
+
+        # Convert frames to PIL Images
+        frames_pil = convert_frames_to_pil_images(frames_array)
+
+        logger.info(f"RoboReward: Converted {len(frames_pil)} frames to PIL Images")
+
+        if not frames_pil:
+            return []
+
+        num_frames = len(frames_pil)
+        if num_frames == 1:
+            # Duplicate the single frame to make it 2 frames
+            frames_pil = [frames_pil[0], frames_pil[0]]
+            num_frames = 2
+    
+        if self.use_prefix_samples and num_frames > 2:
+            num_samples = num_frames
+            prefix_lengths = np.linspace(1, num_frames, num_samples, dtype=int)
+            prefix_lengths = sorted({int(x) for x in prefix_lengths})
+        else:
+            prefix_lengths = [num_frames]
+
+        # Ensure at least 2 frames for video processing (qwen_vl_utils requires minimum 2 frames)
+        
+
+        # Build prompt
+        prompt = self._build_prompt(task_description)
+
+        # Create temporary directory for frame files
+        # Use individual frame files instead of video to avoid torchcodec memory issues
+        # According to qwen-vl-utils docs, we can pass frames as a list of file paths
+        tmpdir = tempfile.mkdtemp()
+        unique_id = uuid.uuid4().hex
+
+        # Save frames as individual JPEG files (much smaller than video, avoids torchcodec overhead)
+        frame_paths = []
+        for i, frame_pil in enumerate(frames_pil):
+            frame_path = Path(tmpdir) / f"roboreward_{unique_id}_frame_{i:04d}.jpg"
+            # Save as JPEG with reasonable quality to reduce file size
+            frame_pil.save(frame_path, "JPEG", quality=85, optimize=True)
+            frame_paths.append(f"file://{frame_path}")
+
+        logger.info(f"RoboReward: Saved {len(frame_paths)} frames as JPEG files in {tmpdir}")
+
+        all_message = []
+        for length in prefix_lengths:
+
+            # Build message with frames as list of file paths (following Qwen3-VL pattern)
+            message = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "video", "video": frame_paths[:length], "sample_fps": 1.0},
+                        {"type": "text", "text": prompt},
+                    ],
+                }
+            ]
+            all_message.append(message)
+
+        # Apply chat template
+        text = [
+            self.processor.apply_chat_template(message, tokenize=False, add_generation_prompt=True)
+            for message in all_message
+        ]
+
+        # Process vision info (qwen-vl-utils handles resizing)
+        image_inputs, video_inputs, video_kwargs = process_vision_info(
+            all_message,
+            image_patch_size=16,
+            return_video_kwargs=True,
+            return_video_metadata=True,
         )
+
+        # Split videos and metadata (video_inputs is list of (video, video_metadata) tuples)
+        if video_inputs is not None:
+            videos, video_metadatas = zip(*video_inputs, strict=True)
+            videos, video_metadatas = list(videos), list(video_metadatas)
+        else:
+            videos = None
+            video_metadatas = None
+
+        # Process inputs (do_resize=False since qwen-vl-utils already resized)
+        inputs = self.processor(
+            text=text,
+            images=image_inputs,
+            videos=videos,
+            video_metadata=video_metadatas,
+            padding=True,
+            return_tensors="pt",
+            do_resize=False,  # qwen-vl-utils already resized
+            **video_kwargs,
+        )
+        inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
+
+        # Generate
+        with torch.no_grad():
+            generated_ids = self.model.generate(
+                **inputs,
+                max_new_tokens=self.max_new_tokens,
+                do_sample=False,  # Deterministic
+            )
+
+        # Decode output
+        generated_ids_trimmed = [
+            out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs["input_ids"], generated_ids, strict=True)
+        ]
+        output_texts = self.processor.batch_decode(
+            generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
+        )
+
+        # Parse score
+        
+        discrete_score = [self._parse_score(output_text) for output_text in output_texts]
+        logger.info(f"RoboReward: Discrete score: {discrete_score}")
+
+        discrete_score = [
+            1 if x is None else x 
+            for x in discrete_score
+        ]
+
+        # Return same discrete score for all frames in this subsequence
+        # Use original num_frames from frames_array (before duplication)
+        # original_num_frames = len(convert_frames_to_pil_images(frames_array))
+
+        # because RoboReward returns a score between 1 and 5, we need to normalize it to 0-1
+        # result = [float(discrete_score) / 4.0 - 0.25] * original_num_frames
+        result = [float(_discrete_score) / 4.0 - 0.25 for _discrete_score in discrete_score]
+        
+        # Clean up temporary directory
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+        return result
+
+  
+    def predict(self, samples: List[EvaluationSample]) -> List[Prediction]:
+        result = []
+        for sample in samples:
+            if not isinstance(sample, ProgressSample):
+                raise TypeError(f"{self.config.name} only supports progress samples")
+            reference_path = sample.trajectory.metadata.get("reference_video_path")
+            values = np.asarray(
+                self.compute_progress_with_prefix(
+                    np.asarray(sample.trajectory.frames),
+                    sample.trajectory.task,
+                    str(reference_path) if reference_path else None,
+                ),
+                dtype=float,
+            ).reshape(-1)
+            expected = len(sample.trajectory.frames)
+            if len(values) != expected:
+                raise ValueError(f"Progress length mismatch: expected {expected}, got {len(values)}")
+            if not np.isfinite(values).all():
+                raise ValueError("Progress values must be finite")
+            if ((values < 0) | (values > 1)).any():
+                raise ValueError("Progress values must be in [0, 1]")
+            result.append(
+                ProgressPrediction(
+                    sample_id=sample.sample_id,
+                    progress=values.tolist(),
+                    model=self.config.model_id or self.config.model_path or self.config.name,
+                    model_version=self.config.model_version,
+                )
+            )
+        return result

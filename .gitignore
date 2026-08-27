@@ -33,6 +33,7 @@ unsloth_compiled_cache/
 venv_robodopamine.txt
 configs/eval/*
 !configs/eval/synthetic_temporal_robustness.yaml
+tests/
 # Editor and operating-system temporary files
 .DS_Store
 *.swp
