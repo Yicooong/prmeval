@@ -24,7 +24,7 @@ prmeval-data-preprocess = "prmeval.sample.prepare:main"
 [project.optional-dependencies]
 local-hf = [
     "torch>=2.1",
-    "transformers>=4.45",
+    "transformers>=4.57",
     "accelerate>=1.0",
 ]
 local-qwen = [

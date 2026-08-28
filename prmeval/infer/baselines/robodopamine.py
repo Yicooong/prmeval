@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: E501
 """Robo-Dopamine (GRM) baseline for progress prediction.
 
 Reference: https://github.com/FlagOpen/Robo-Dopamine
@@ -13,25 +14,20 @@ import json
 import os
 import shutil
 import tempfile
-from pathlib import Path
-from typing import ClassVar
-from typing import List, Tuple, Optional, Dict
-import numpy as np
-from tqdm import tqdm
-from PIL import Image
 from datetime import datetime
+from pathlib import Path
+from typing import Any, ClassVar
+
+import cv2
+import numpy as np
+from PIL import Image
+from tqdm import tqdm
+
 from ...core.config import InferConfig
 from ...core.registry import register_infer
 from ...core.schemas import EvaluationSample, Prediction, ProgressPrediction, ProgressSample
 from ..base import Infer
-import cv2
-from transformers import AutoProcessor, AutoModelForCausalLM
-from moviepy.video.io.ImageSequenceClip import ImageSequenceClip
-try:
-    from vllm import LLM, SamplingParams
-except ImportError:
-    print("vllm not found, please install it with `pip install vllm`")
-    pass
+
 # Known model IDs for config / docs
 ROBODOPAMINE_GRM_3B = "tanhuajie2001/Robo-Dopamine-GRM-3B"
 ROBODOPAMINE_GRM_8B = "tanhuajie2001/Robo-Dopamine-GRM-2.0-8B-Preview"
@@ -86,16 +82,18 @@ Output Format (STRICT)
 Return ONLY one line containing the score wrapped in <score> tags, as an integer percentage with a percent sign:
 <score>+NN%</score>  or  <score>-NN%</score>  or  <score>0%</score>
 """
+
+
 def ensure_dir(path: Path):
     path.mkdir(parents=True, exist_ok=True)
 
 
-def list_pngs_sorted(dir_path: Path) -> List[Path]:
+def list_pngs_sorted(dir_path: Path) -> list[Path]:
     """Return lexicographically sorted .png files (case-insensitive) under dir_path."""
     return sorted([p for p in dir_path.iterdir() if p.is_file() and p.suffix.lower() == ".png"])
 
 
-def get_frame_count(path: Path) -> Tuple[str, int]:
+def get_frame_count(path: Path) -> tuple[str, int]:
     """
     Detects if path is a video file or a directory of images.
     Returns: (source_type, frame_count). source_type is 'dir' or 'video'.
@@ -116,7 +114,7 @@ def get_frame_count(path: Path) -> Tuple[str, int]:
         return "video", n
 
 
-def make_sample_indices_by_interval(num_frames: int, interval: int) -> List[int]:
+def make_sample_indices_by_interval(num_frames: int, interval: int) -> list[int]:
     """
     Generate indices based on a fixed frame interval.
     Always includes the first frame (0) and ensures the very last frame (num_frames-1) is included.
@@ -135,7 +133,7 @@ def make_sample_indices_by_interval(num_frames: int, interval: int) -> List[int]
     return indices
 
 
-def save_frames(src_path: Path, out_dir: Path, indices: List[int], src_type: str) -> None:
+def save_frames(src_path: Path, out_dir: Path, indices: list[int], src_type: str) -> None:
     """
     Extracts and saves specific frames from a video or copies them from a directory.
     Output format: frame_{:06d}.png
@@ -172,10 +170,10 @@ def save_frames(src_path: Path, out_dir: Path, indices: List[int], src_type: str
 
 
 def build_samples_json(
-    run_root: Path, task: str, indices: List[int], ref_end_path: str, mode: str = "incremental"
-) -> List[Dict]:
+    run_root: Path, task: str, indices: list[int], ref_end_path: str, mode: str = "incremental"
+) -> list[dict[str, Any]]:
     """
-    Constructs the list of samples for VLLM inference.
+    Constructs the list of samples for Transformers inference.
 
     Args:
         mode: "incremental", "forward", or "backward"
@@ -231,81 +229,120 @@ def build_samples_json(
             str(cache_root / "cam_right_wrist" / f"frame_{af:06d}.png"),
         ]
 
-        items.append({
-            "id": f"step-{timestamp_name}-{k:04d}-{bf_id_str}-af_{af:06d}",
-            "task": task,
-            "image": [
-                str(cache_root / "cam_high" / f"frame_{0:06d}.png"),  # 1. Ref Start
-                ref_end_path,  # 2. Ref End
-                bf_images[0],  # 3. Before High
-                bf_images[1],  # 4. Before Left
-                bf_images[2],  # 5. Before Right
-                af_images[0],  # 6. After High
-                af_images[1],  # 7. After Left
-                af_images[2],  # 8. After Right
-            ],
-        })
+        items.append(
+            {
+                "id": f"step-{timestamp_name}-{k:04d}-{bf_id_str}-af_{af:06d}",
+                "task": task,
+                "image": [
+                    str(cache_root / "cam_high" / f"frame_{0:06d}.png"),  # 1. Ref Start
+                    ref_end_path,  # 2. Ref End
+                    bf_images[0],  # 3. Before High
+                    bf_images[1],  # 4. Before Left
+                    bf_images[2],  # 5. Before Right
+                    af_images[0],  # 6. After High
+                    af_images[1],  # 7. After Left
+                    af_images[2],  # 8. After Right
+                ],
+            }
+        )
     return items
+
 
 class GRMInference:
     def __init__(self, model_path: str, max_image_num=8, min_pixels=12544, max_pixels=76800):
         print(f"Loading model from {model_path} ...")
 
-        self.model = LLM(
-            model=model_path,
-            gpu_memory_utilization=0.4,
-            max_model_len=8192,
-            limit_mm_per_prompt={"image": max_image_num},
-            enable_prefix_caching=True,
+        prompt_image_count = SYSTEM_PROMPT.count("<image>")
+        if max_image_num != prompt_image_count:
+            raise ValueError(f"RoboDopamine prompt requires exactly {prompt_image_count} images")
+
+        try:
+            import torch
+            from transformers import Qwen3VLForConditionalGeneration, AutoProcessor
+        except ImportError as exc:
+            raise RuntimeError("RoboDopamine requires torch and transformers with multimodal model support") from exc
+
+        self._torch = torch
+        self.max_image_num = max_image_num
+        self.model = Qwen3VLForConditionalGeneration.from_pretrained(
+            model_path,
+            device_map="auto",
+            torch_dtype="auto",
             trust_remote_code=True,
         )
-        self.sampling_params = SamplingParams(temperature=0.1, top_p=0.9, top_k=50, max_tokens=1024)
-
-        self.processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True)
-
+        self.model.eval()
+        self.processor = AutoProcessor.from_pretrained(
+            model_path,
+            trust_remote_code=True,
+        )
+        # Decoder-only generation must be left-padded in a mixed-length batch; otherwise the
+        # shorter prompts start generation from padding tokens and can silently change scores.
         if hasattr(self.processor, "image_processor"):
             self.processor.image_processor.max_pixels = max_pixels
             self.processor.image_processor.min_pixels = min_pixels
+        self.processor.tokenizer.padding_side = "left"
 
-    def inference_batch(self, batch_data: List[Dict]) -> List[Dict]:
+    @staticmethod
+    def _messages(task: str) -> list[dict[str, Any]]:
+        prompt_parts = SYSTEM_PROMPT.format(task=task).split("<image>")
+        content: list[dict[str, str]] = []
+        for index, text in enumerate(prompt_parts):
+            content.append({"type": "text", "text": text})
+            if index < len(prompt_parts) - 1:
+                content.append({"type": "image"})
+        return [{"role": "user", "content": content}]
+
+    @staticmethod
+    def _load_images(paths: list[str]) -> list[Image.Image]:
+        images = []
+        for path in paths:
+            with Image.open(path) as image:
+                images.append(image.convert("RGB"))
+        return images
+
+    def inference_batch(self, batch_data: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if not batch_data:
+            return []
+
         prompts = []
+        images = []
         for item in batch_data:
-            images = [Image.open(p).convert("RGB") for p in item["image"]]
-
-            messages = [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": SYSTEM_PROMPT.format(task=item["task"]).split("<image>")[0]},
-                        {"type": "image"},  # Ref Start
-                        {"type": "text", "text": SYSTEM_PROMPT.format(task=item["task"]).split("<image>")[1]},
-                        {"type": "image"},  # Ref End
-                        {"type": "text", "text": SYSTEM_PROMPT.format(task=item["task"]).split("<image>")[2]},
-                        {"type": "image"},  # BF High
-                        {"type": "text", "text": SYSTEM_PROMPT.format(task=item["task"]).split("<image>")[3]},
-                        {"type": "image"},  # BF Left
-                        {"type": "text", "text": SYSTEM_PROMPT.format(task=item["task"]).split("<image>")[4]},
-                        {"type": "image"},  # BF Right
-                        {"type": "text", "text": SYSTEM_PROMPT.format(task=item["task"]).split("<image>")[5]},
-                        {"type": "image"},  # AF High
-                        {"type": "text", "text": SYSTEM_PROMPT.format(task=item["task"]).split("<image>")[6]},
-                        {"type": "image"},  # AF Left
-                        {"type": "text", "text": SYSTEM_PROMPT.format(task=item["task"]).split("<image>")[7]},
-                        {"type": "image"},  # AF Right
-                        {"type": "text", "text": SYSTEM_PROMPT.format(task=item["task"]).split("<image>")[8]},
-                    ],
-                }
-            ]
-
+            item_images = item["image"]
+            if len(item_images) != self.max_image_num:
+                raise ValueError(f"Expected {self.max_image_num} images per sample, got {len(item_images)}")
+            messages = self._messages(str(item["task"]))
             prompt_text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-            prompts.append({"prompt": prompt_text, "multi_modal_data": {"image": images}})
+            prompts.append(prompt_text)
+            # The multimodal processor consumes images for the whole text batch in prompt order.
+            # Keeping this flat preserves the one-to-one image-token alignment across samples.
+            images.extend(self._load_images(item_images))
 
-        outputs = self.model.generate(prompts, sampling_params=self.sampling_params, use_tqdm=False)
+        inputs = self.processor(text=prompts, images=images, padding=True, return_tensors="pt")
+        inputs = inputs.to(self.model.device)
+        input_length = inputs["input_ids"].shape[1]
+
+        # Match the former vLLM sampling policy. max_new_tokens is deliberate: visual/text prompt
+        # tokens must not reduce the response allowance.
+        with self._torch.inference_mode():
+            output_ids = self.model.generate(
+                **inputs,
+                do_sample=True,
+                temperature=0.1,
+                top_p=0.9,
+                top_k=50,
+                max_new_tokens=1024,
+            )
+        generated_ids = [sample_ids[input_length:] for sample_ids in output_ids]
+        output_texts = self.processor.batch_decode(
+            generated_ids,
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=False,
+        )
 
         results = []
-        for orig_item, out in zip(batch_data, outputs):
+        for orig_item, output_text in zip(batch_data, output_texts, strict=True):
             res_item = orig_item.copy()
-            res_item["pred"] = out.outputs[0].text
+            res_item["pred"] = output_text
             results.append(res_item)
         return results
 
@@ -318,7 +355,7 @@ class GRMInference:
         task: str,
         frame_interval: int = 10,
         batch_size: int = 1,
-        goal_image: Optional[str] = None,
+        goal_image: str | None = None,
         eval_mode: str = "incremental",
         visualize: bool = False,
     ) -> str:
@@ -355,7 +392,7 @@ class GRMInference:
         indices = make_sample_indices_by_interval(total_frames, frame_interval)
         print(f"Frames: {total_frames}, Int: {frame_interval}, Mode: {eval_mode}, Indices: {len(indices)}")
 
-        for p, key, (stype, _) in zip(paths, cam_dirs.keys(), types_counts):
+        for p, key, (stype, _) in zip(paths, cam_dirs.keys(), types_counts, strict=True):
             save_frames(p, cam_dirs[key], indices, stype)
 
         # Handle Goal Image / Ref End
@@ -430,6 +467,7 @@ class GRMInference:
 
             prev_prog = curr_progress
 
+        # Retain the historical artifact name so existing callers of run_pipeline remain compatible.
         result_path = run_root / "pred_vllm.json"
         with open(result_path, "w", encoding="utf-8") as f:
             json.dump(results, f, indent=2, ensure_ascii=False)
@@ -440,6 +478,7 @@ class GRMInference:
         #     plot_video_reward(run_root)
 
         return str(run_root)
+
 
 @register_infer("robodopamine")
 class RoboDopamine(Infer):
@@ -524,7 +563,7 @@ class RoboDopamine(Infer):
 
             out_root = tmpdir_path / "out"
             out_root.mkdir(parents=True, exist_ok=True)
-            goal_image = self._goal_image_path(tmpdir_path, frames_dir, num_frames, reference_video_path)
+            # goal_image = self._goal_image_path(tmpdir_path, frames_dir, num_frames, reference_video_path)
             # run_pipeline: single-view = same dir for all cams; no-goal = blank placeholder
             run_root = self._grm.run_pipeline(
                 cam_high_path=str(frames_dir),
@@ -534,7 +573,8 @@ class RoboDopamine(Infer):
                 task=task_description,
                 frame_interval=self.frame_interval,
                 batch_size=self.batch_size,
-                goal_image=goal_image,
+                # set to None use last frame
+                goal_image=None,
                 eval_mode=self.eval_mode,
                 visualize=False,
             )
@@ -562,28 +602,33 @@ class RoboDopamine(Infer):
 
         return progress_arr
 
-    def predict(self, sample: EvaluationSample) -> Prediction:
-        if not isinstance(sample, ProgressSample):
-            raise TypeError(f"{self.config.name} only supports progress samples")
-        reference_path = sample.trajectory.metadata.get("reference_video_path")
-        values = np.asarray(
-            self.compute_progress(
-                np.asarray(sample.trajectory.frames),
-                sample.trajectory.task,
-                str(reference_path) if reference_path else None,
-            ),
-            dtype=float,
-        ).reshape(-1)
-        expected = len(sample.trajectory.frames)
-        if len(values) != expected:
-            raise ValueError(f"Progress length mismatch: expected {expected}, got {len(values)}")
-        if not np.isfinite(values).all():
-            raise ValueError("Progress values must be finite")
-        if ((values < 0) | (values > 1)).any():
-            raise ValueError("Progress values must be in [0, 1]")
-        return ProgressPrediction(
-            sample_id=sample.sample_id,
-            progress=values.tolist(),
-            model=self.config.model_id or self.config.model_path or self.config.name,
-            model_version=self.config.model_version,
-        )
+    def predict(self, samples: list[EvaluationSample]) -> list[Prediction]:
+        result = []
+        for sample in samples:
+            if not isinstance(sample, ProgressSample):
+                raise TypeError(f"{self.config.name} only supports progress samples")
+            reference_path = sample.trajectory.metadata.get("reference_video_path")
+            values = np.asarray(
+                self.compute_progress(
+                    np.asarray(sample.trajectory.frames),
+                    sample.trajectory.task,
+                    str(reference_path) if reference_path else None,
+                ),
+                dtype=float,
+            ).reshape(-1)
+            expected = len(sample.trajectory.frames)
+            if len(values) != expected:
+                raise ValueError(f"Progress length mismatch: expected {expected}, got {len(values)}")
+            if not np.isfinite(values).all():
+                raise ValueError("Progress values must be finite")
+            if ((values < 0) | (values > 1)).any():
+                raise ValueError("Progress values must be in [0, 1]")
+            result.append(
+                ProgressPrediction(
+                    sample_id=sample.sample_id,
+                    progress=values.tolist(),
+                    model=self.config.model_id or self.config.model_path or self.config.name,
+                    model_version=self.config.model_version,
+                )
+            )
+        return result
