@@ -11,7 +11,7 @@ Paper: TOPReward: Token Probabilities as Hidden Zero-Shot Rewards for Robotics (
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, ClassVar
+from typing import Any, ClassVar, List
 
 import numpy as np
 from PIL import Image
@@ -87,7 +87,7 @@ class TopReward(Infer):
         self._initialize(
             model_path=config.model_path,
             max_frames=int(options.get("max_frames", 64)),
-            num_prefix_samples=int(options.get("num_prefix_samples", 15)),
+            use_prefix_samples=bool(options.get("use_prefix_samples", False)),
             reduction=str(options.get("reduction", "mean")),
             add_chat_template=bool(options.get("add_chat_template", True)),
             fps=float(options.get("fps", 2.0)),
@@ -97,7 +97,7 @@ class TopReward(Infer):
         self,
         model_path: str = "Qwen/Qwen3-VL-8B-Instruct",
         max_frames: int = 64,
-        num_prefix_samples: int = 15,
+        use_prefix_samples: bool = False,
         reduction: str = "mean",
         add_chat_template: bool = True,
         fps: float = 2.0,
@@ -107,7 +107,7 @@ class TopReward(Infer):
         Args:
             model_path: HuggingFace model ID (Qwen3-VL recommended).
             max_frames: Max frames per trajectory (sampled if longer).
-            num_prefix_samples: Number of prefix lengths to evaluate for progress curve.
+            use_prefix_samples: prefix lengths to evaluate for progress curve.
             reduction: "mean" or "sum" over instruction tokens.
             add_chat_template: Whether to use chat template for instruction prompt.
             fps: Frames per second for video input to the VLM.
@@ -123,7 +123,7 @@ class TopReward(Infer):
 
         self.model_path = model_path
         self.max_frames = max_frames
-        self.num_prefix_samples = num_prefix_samples
+        self.use_prefix_samples = use_prefix_samples
         self.reduction = reduction
         self.add_chat_template = add_chat_template
         self.fps = fps
@@ -142,57 +142,71 @@ class TopReward(Infer):
                 if attn_impl == "eager":
                     raise
                 logger.warning(f"attn_implementation={attn_impl} failed: {e}, trying next.")
-        self.processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True)
+        self.processor = AutoProcessor.from_pretrained(model_path, padding_side="left", trust_remote_code=True)
 
     def _compute_instruction_reward(
         self,
         frames: list[Image.Image],
         instruction: str,
-    ) -> float:
+        prefix_length: list[int]
+    ) -> list[float]:
         """Compute log-likelihood reward for instruction given video (single trajectory)."""
         prompt_text = "The above video shows a robot manipulation trajectory that completes the following task: "
         eos_token = self.processor.tokenizer.eos_token
 
-        if self.add_chat_template:
-            instruction_suffix = f"{instruction} Decide whether the above statement is True or not. The answer is:"
-            templated_messages = [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "video", "video": frames, "fps": self.fps},
-                        {"type": "text", "text": f"{prompt_text}{instruction_suffix}"},
-                    ],
-                }
-            ]
-            prompt_chat = self.processor.apply_chat_template(
-                templated_messages, tokenize=False, add_generation_prompt=True
-            )
-            full_text = f"{prompt_chat}True"
-            image_inputs, video_inputs = process_vision_info(templated_messages)
-        else:
-            instruction_suffix = f"{instruction} Decide whether the above statement is True or not. The answer is: True"
-            user_messages = [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "video", "video": frames, "fps": self.fps},
-                        {"type": "text", "text": prompt_text},
-                    ],
-                }
-            ]
-            prompt_chat = self.processor.apply_chat_template(user_messages, tokenize=False, add_generation_prompt=False)
-            if eos_token:
-                prompt_chat = prompt_chat.split(eos_token)[0]
-            full_text = f"{prompt_chat}{instruction_suffix}"
-            image_inputs, video_inputs = process_vision_info(user_messages)
+
+        full_texts = []
+        templated_messages = []
+        for p_length in prefix_length:
+            if self.add_chat_template:
+                instruction_suffix = f"{instruction} Decide whether the above statement is True or not. The answer is:"
+                templated_message = [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "video", "video": frames[:p_length]},
+                            {"type": "text", "text": f"{prompt_text}{instruction_suffix}"},
+                        ],
+                    }
+                ]
+                prompt_chat = self.processor.apply_chat_template(
+                    templated_message, tokenize=False, add_generation_prompt=True
+                )
+                full_text = f"{prompt_chat}True"
+                templated_messages.append(templated_message)
+                full_texts.append(full_text)
+                
+            else:
+                instruction_suffix = f"{instruction} Decide whether the above statement is True or not. The answer is: True"
+                user_message = [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "video", "video": frames[:p_length]},
+                            {"type": "text", "text": prompt_text},
+                        ],
+                    }
+                ]
+                prompt_chat = self.processor.apply_chat_template(user_message, tokenize=False, add_generation_prompt=False)
+                if eos_token:
+                    prompt_chat = prompt_chat.split(eos_token)[0]
+                full_text = f"{prompt_chat}{instruction_suffix}"
+                templated_messages.append(user_message)
+                full_texts.append(full_text)
+
+        image_inputs, video_inputs = process_vision_info(templated_messages)
+            
+            
 
         inputs = self.processor(
-            text=[full_text],
+            text=full_texts,
             images=image_inputs,
             videos=video_inputs,
             padding=True,
             return_tensors="pt",
         )
+
+
         inputs = inputs.to(self.model.device)
         labels = inputs["input_ids"].clone()
         prompt_length = inputs["input_ids"].shape[1] - 1
@@ -210,9 +224,22 @@ class TopReward(Infer):
         mask = target_labels != -100
         safe_targets = target_labels.masked_fill(~mask, 0)
         token_log_probs = log_probs.gather(-1, safe_targets.unsqueeze(-1)).squeeze(-1)
+        # rewards = []
+
+        # for i in range(token_log_probs.shape[0]):
+        #     valid_log_probs = token_log_probs[i][mask[i]]
+
+        #     if self.reduction == "sum":
+        #         reward = valid_log_probs.sum().item()
+        #     else:
+        #         reward = valid_log_probs.mean().item()
+
+        #     rewards.append(reward)
+
+        # return rewards
+
         masked_log_probs = token_log_probs[mask]
-        reward = masked_log_probs.sum().item() if self.reduction == "sum" else masked_log_probs.mean().item()
-        return reward
+        return masked_log_probs.tolist()
 
     def _compute_instruction_rewards_for_prefixes(
         self,
@@ -221,18 +248,17 @@ class TopReward(Infer):
     ) -> _InstructionRewardResult:
         """Compute rewards for trajectory prefixes; return normalized curve."""
         num_frames = len(frames)
-        num_samples = min(self.num_prefix_samples, num_frames)
-        if num_frames > 2:
+
+        if self.use_prefix_samples and num_frames > 2:
+            num_samples = num_frames
             prefix_lengths = np.linspace(1, num_frames, num_samples, dtype=int)
             prefix_lengths = sorted({int(x) for x in prefix_lengths})
         else:
             prefix_lengths = [num_frames]
 
-        rewards = []
-        for length in prefix_lengths:
-            prefix_frames = frames[:length]
-            r = self._compute_instruction_reward(prefix_frames, instruction)
-            rewards.append(r)
+       
+        rewards = self._compute_instruction_reward(frames, instruction, prefix_lengths)
+            
         normalized = _normalize_rewards(rewards).tolist()
         return _InstructionRewardResult(
             reward=rewards[-1],
@@ -284,28 +310,33 @@ class TopReward(Infer):
         progress = np.interp(frame_indices, lengths, values)
         return np.clip(progress.astype(np.float64), 0.0, 1.0)
 
-    def predict(self, sample: EvaluationSample) -> Prediction:
-        if not isinstance(sample, ProgressSample):
-            raise TypeError(f"{self.config.name} only supports progress samples")
-        reference_path = sample.trajectory.metadata.get("reference_video_path")
-        values = np.asarray(
-            self.compute_progress(
-                np.asarray(sample.trajectory.frames),
-                sample.trajectory.task,
-                str(reference_path) if reference_path else None,
-            ),
-            dtype=float,
-        ).reshape(-1)
-        expected = len(sample.trajectory.frames)
-        if len(values) != expected:
-            raise ValueError(f"Progress length mismatch: expected {expected}, got {len(values)}")
-        if not np.isfinite(values).all():
-            raise ValueError("Progress values must be finite")
-        if ((values < 0) | (values > 1)).any():
-            raise ValueError("Progress values must be in [0, 1]")
-        return ProgressPrediction(
-            sample_id=sample.sample_id,
-            progress=values.tolist(),
-            model=self.config.model_id or self.config.model_path or self.config.name,
-            model_version=self.config.model_version,
+    def predict(self, samples: List[EvaluationSample]) -> List[Prediction]:
+        result = []
+        for sample in samples:
+            if not isinstance(sample, ProgressSample):
+                raise TypeError(f"{self.config.name} only supports progress samples")
+            reference_path = sample.trajectory.metadata.get("reference_video_path")
+            values = np.asarray(
+                self.compute_progress(
+                    np.asarray(sample.trajectory.frames),
+                    sample.trajectory.task,
+                    str(reference_path) if reference_path else None,
+                ),
+                dtype=float,
+            ).reshape(-1)
+            expected = len(sample.trajectory.frames)
+            if len(values) != expected:
+                raise ValueError(f"Progress length mismatch: expected {expected}, got {len(values)}")
+            if not np.isfinite(values).all():
+                raise ValueError("Progress values must be finite")
+            if ((values < 0) | (values > 1)).any():
+                raise ValueError("Progress values must be in [0, 1]")
+            result.append(
+                ProgressPrediction(
+                    sample_id=sample.sample_id,
+                    progress=values.tolist(),
+                    model=self.config.model_id or self.config.model_path or self.config.name,
+                    model_version=self.config.model_version,
+                )
         )
+        return result
