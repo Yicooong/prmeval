@@ -12,7 +12,7 @@ from .core.registry import DATASETS, INFERS, METRICS, SAMPLERS
 from .core.runner import Evaluator
 from .core.schemas import EvaluationRecord, jsonable
 from .metrics.builtins import compute_metrics
-from .sample.adapters import create_dataset
+from .sample.adapters import create_dataset_adapter
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -105,7 +105,7 @@ def main(argv: list[str] | None = None) -> int:
         print("\n".join(METRICS.names()))
     elif args.command == "validate-dataset":
         config = EvalConfig.from_yaml(args.config)
-        trajectories = list(create_dataset(config.sampling).load())
+        trajectories = list(create_dataset_adapter(config.sampling).load())
         print(json.dumps({"valid": True, "trajectories": len(trajectories)}, indent=2))
     elif args.command == "validate-samples":
         print(json.dumps(validate_sample_artifacts(Path(args.samples)), indent=2, ensure_ascii=False))

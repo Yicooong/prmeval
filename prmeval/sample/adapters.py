@@ -127,5 +127,5 @@ def load_frames(frames: object) -> np.ndarray:
     raise TypeError(f"Unsupported frames value: {type(frames)!r}")
 
 
-def create_dataset(config: SamplingConfig) -> DatasetAdapter:
+def create_dataset_adapter(config: SamplingConfig) -> DatasetAdapter:
     return DATASETS.get(config.adapter)(config)

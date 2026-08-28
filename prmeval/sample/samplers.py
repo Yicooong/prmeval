@@ -15,7 +15,7 @@ from ..core.config import SamplingConfig
 from ..core.registry import SAMPLERS, register_sampler
 from ..core.schemas import PreferenceSample, ProgressSample, Trajectory
 from .adapters import load_frames
-from .progress import compute_progress, linspace_indices
+from .progress import compute_target_progress, linspace_indices
 from .temporal import transform_indices
 import logging
 
@@ -32,7 +32,7 @@ def _subset_trajectory(traj: Trajectory, indices: list[int], config: SamplingCon
     frames = load_frames(traj.frames)
     total = len(frames)
     selected = frames[indices]
-    target = compute_progress(total, indices, config.progress_type, partial_success=traj.partial_success)
+    target = compute_target_progress(total, indices, config.progress_type, partial_success=traj.partial_success)
     if len(selected) > config.base_frames:
         local = linspace_indices(len(selected), config.base_frames)
         selected = selected[local]
@@ -107,7 +107,7 @@ class SyntheticTemporalRobustnessSampler(EvalSampler):
             if total < base_count:
                 continue
             base_indices = linspace_indices(total, base_count)
-            source_progress = compute_progress(total, list(range(total)), self.config.progress_type)
+            source_progress = compute_target_progress(total, list(range(total)), self.config.progress_type)
             variants = [("original", 0)]
             variants.extend(
                 (transform, variant)

@@ -18,7 +18,7 @@ import numpy as np
 from ..infer import baselines as _baselines  # noqa: F401
 from ..infer.base import Infer
 from ..metrics.builtins import compute_metrics
-from ..sample.adapters import create_dataset
+from ..sample.adapters import create_dataset_adapter
 from ..sample.samplers import create_sampler
 from .artifacts import (
     load_sample_artifacts,
@@ -298,7 +298,7 @@ class Evaluator:
 
         trajectories = list(
             self._tqdm(
-                create_dataset(self.config.sampling).load(),
+                create_dataset_adapter(self.config.sampling).load(),
                 description="Stage 1/3 Load trajectories",
                 unit="trajectory",
             )
@@ -446,7 +446,7 @@ class Evaluator:
         logger.info("Stage 1/3 Sample started: in-memory continuous pipeline")
         trajectories = list(
             self._tqdm(
-                create_dataset(self.config.sampling).load(),
+                create_dataset_adapter(self.config.sampling).load(),
                 description="Stage 1/3 Load trajectories",
                 unit="trajectory",
             )

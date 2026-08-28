@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 
-def compute_progress(
+def compute_target_progress(
     num_frames_total: int,
     frame_indices: list[int],
     progress_type: str = "absolute_first_frame",

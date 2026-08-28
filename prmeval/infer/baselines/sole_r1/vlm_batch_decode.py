@@ -17,9 +17,6 @@ from .utils import (
 
 def load_model(
     checkpoint_path: Path,
-    gpu_memory_utilization: float = 0.9,
-    enable_prefix_caching: bool = True,
-    max_model_len: int = 131072,
     temperature: float = 1.0,
     top_p: float = 0.9,
     top_k: int = 50,
