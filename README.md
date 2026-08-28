@@ -86,36 +86,6 @@ python -m prmeval.cli list-metrics
 - [本地数据格式与 Dataset Adapter](docs/DATASETS.md)
 - [原始数据集统一工具](dataset_unify/README.md)
 
-## 推理代码结构
-
-```text
-prmeval/infer/
-├── __init__.py          # 导入 built-in baselines 并触发注册
-├── base.py              # Infer 抽象类、图片编码与标准 Prediction 构造
-├── openai.py            # 组合式 OpenAI-compatible client 与 JSON Schema 校验
-└── baselines/
-    ├── __init__.py      # 导入所有 built-in baseline
-    ├── common.py        # 模型之间确实共用的算法 helper
-    ├── progress_test.py
-    ├── gvl.py
-    ├── roboreward.py
-    ├── robodopamine.py
-    ├── sole_r1.py
-    ├── topreward.py
-    ├── vlac.py
-    ├── rbm.py           # 同时注册 rbm 和 rewind
-    ├── rlvlmf.py        # preference baseline
-    └── rbd_inference.py
-```
-
-所有 baseline 直接继承 `Infer` 并使用 `@register_infer(name)` 注册。Runner 根据 `config.infer.name` 直接构造具体类，随后顺序逐样本调用 `predict()`。框架不区分 local/remote，也不提供公共 batch 或 adapter 层；运行方式由 baseline 自己决定。
-
-Progress baseline 保留标准 `compute_progress()`，由 `predict()` 统一调用并生成等长、有限、位于 `[0,1]` 的 `ProgressPrediction`。RLVLMF 的 `predict()` 调用 `compute_preference()`。完整接口见 [Infer 模型接入](docs/INFER_MODELS.md)。
-
-`progress_test` 用于检查通用 OpenAI-compatible 协议及三个 Stage 的产物衔接；真实 baseline 的算法正确性仍应使用各模型自己的回归测试验证。
-
-原始数据需要先通过独立的 [`dataset_unify`](dataset_unify/) 工具转换为本地标准 Hugging Face Dataset，再交给 PRMEval 读取。数据统一的字段、配置和新增数据集方法均以该工具自己的文档为准。
-
 ## 致谢与来源说明
 
 本项目基于开源项目 [Robometer](https://github.com/robometer/robometer) 进行重构与扩展。

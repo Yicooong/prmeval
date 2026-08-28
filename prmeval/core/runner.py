@@ -309,9 +309,9 @@ class Evaluator:
             and (t.partial_success is None or np.isclose(t.partial_success, 1.0))
         ]
 
-        try:
+        if "synthetic_temporal_robustness" in self.config.metrics:
             total = len(trajectories) * self.config.sampling.temporal_robustness.variants_per_transform * len(self.config.sampling.temporal_robustness.transforms)
-        except:
+        else:
             total = len(trajectories)
         samples = list(
             self._tqdm(
@@ -457,9 +457,9 @@ class Evaluator:
             and (t.partial_success is None or np.isclose(t.partial_success, 1.0))
         ]
 
-        try:
+        if "synthetic_temporal_robustness" in self.config.metrics:
             total = len(trajectories) * self.config.sampling.temporal_robustness.variants_per_transform * len(self.config.sampling.temporal_robustness.transforms)
-        except:
+        else:
             total = len(trajectories)
         logger.info("Stage 1/3 Sample ready: %d trajectories", total)
 

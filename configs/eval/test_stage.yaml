@@ -5,7 +5,6 @@ sampling:
   max_trajectories: 1
   eval_types: [reward_alignment]
   base_frames: 3
-  pad_frames: false
   progress_type: absolute_first_frame
 
 infer:

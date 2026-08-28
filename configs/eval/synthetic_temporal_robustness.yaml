@@ -1,11 +1,10 @@
 sampling:
-  dataset_name: jsonl-synthetic-temporal
-  adapter: jsonl
-  paths: [examples/synthetic_temporal/trajectories.jsonl]
-  max_trajectories: 1
+  dataset_name: rbm_1m_ood
+  adapter: huggingface 
+  paths: [/mnt/shared-storage-gpfs2/xxxxx/hf_rbm_1m_ood_datasets/rbm-1m-ood]
+  # max_trajectories: 1
   eval_types: [synthetic_temporal_robustness]
   base_frames: 5
-  pad_frames: false
   progress_type: absolute_first_frame
   random_seed: 42
   temporal_robustness:
@@ -16,13 +15,12 @@ sampling:
     variants_per_transform: 3
 
 infer:
-  name: progress_test
-  base_url: BASE_URL
-  api_key: OPENAI_API_KEY
-  model_id: MODEL_ID
-  max_retries: 0
-  temperature: 0
-  max_tokens: 4096
+  name: robometer
+  model_path: robometer/Robometer-4B
+  model_id: robometer/Robometer-4B
+  batch_size: 8
+  options:
+    max_new_tokens: 128
 
 metrics: [synthetic_temporal_robustness]
 output_dir: evaluation_output

@@ -38,10 +38,6 @@ def _subset_trajectory(traj: Trajectory, indices: list[int], config: SamplingCon
         selected = selected[local]
         indices = [indices[i] for i in local]
         target = [target[i] for i in local]
-    if config.pad_frames and 0 < len(selected) < config.base_frames:
-        amount = config.base_frames - len(selected)
-        selected = np.concatenate([selected, np.repeat(selected[-1:], amount, axis=0)], axis=0)
-        target.extend([target[-1]] * amount)
     return traj.model_copy(
         update={
             "frames": selected,

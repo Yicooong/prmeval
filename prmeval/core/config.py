@@ -20,7 +20,7 @@ class TemporalRobustnessConfig(BaseModel):
     transforms: list[TemporalTransform] = Field(
         default_factory=lambda: ["pause", "slow", "fast", "rewind", "retry", "truncate", "skip"]
     )
-    variants_per_transform: int = Field(default=3, ge=1)
+    variants_per_transform: int = Field(default=1, ge=1)
     pause_extra_ratio_range: tuple[float, float] = (0.2, 0.7)
     slow_gamma_range: tuple[float, float] = (1.5, 3.0)
     fast_gamma_range: tuple[float, float] = (0.33, 0.67)
@@ -66,7 +66,6 @@ class SamplingConfig(BaseModel):
     max_trajectories: int | None = Field(default=None, ge=1)
     eval_types: list[str] = Field(default_factory=lambda: ["reward_alignment"])
     base_frames: int = Field(default=8, ge=1)
-    pad_frames: bool = False
     progress_type: Literal["absolute_first_frame", "absolute_wrt_total_frames", "relative_first_frame"] = (
         "absolute_first_frame"
     )
@@ -88,8 +87,6 @@ class SamplingConfig(BaseModel):
             raise ValueError("synthetic_temporal_robustness requires temporal_robustness.max_frames >= 6")
         if self.progress_type == "relative_first_frame":
             raise ValueError("synthetic_temporal_robustness requires an absolute progress_type")
-        if self.pad_frames:
-            raise ValueError("synthetic_temporal_robustness does not support pad_frames because frame counts vary")
         if self.base_frames < 5:
             raise ValueError("synthetic_temporal_robustness requires sampling.base_frames >= 5")
         if self.base_frames > temporal.max_frames:

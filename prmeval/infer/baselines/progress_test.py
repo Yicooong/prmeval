@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, ClassVar
+from typing import Any, ClassVar, List
 
 import numpy as np
 
@@ -38,31 +38,36 @@ class ProgressTestModel(Infer):
         )
         return np.asarray(parsed["progress"], dtype=float)
 
-    def predict(self, sample: EvaluationSample) -> Prediction:
-        if not isinstance(sample, ProgressSample):
-            raise TypeError(f"{self.config.name} only supports progress samples")
-        reference_path = sample.trajectory.metadata.get("reference_video_path")
-        values = np.asarray(
-            self.compute_progress(
-                np.asarray(sample.trajectory.frames),
-                sample.trajectory.task,
-                str(reference_path) if reference_path else None,
-            ),
-            dtype=float,
-        ).reshape(-1)
-        expected = len(sample.trajectory.frames)
-        if len(values) != expected:
-            raise ValueError(f"Progress length mismatch: expected {expected}, got {len(values)}")
-        if not np.isfinite(values).all():
-            raise ValueError("Progress values must be finite")
-        if ((values < 0) | (values > 1)).any():
-            raise ValueError("Progress values must be in [0, 1]")
-        return ProgressPrediction(
-            sample_id=sample.sample_id,
-            progress=values.tolist(),
-            model=self.config.model_id or self.config.model_path or self.config.name,
-            model_version=self.config.model_version,
-        )
+    def predict(self, samples: List[EvaluationSample]) -> List[Prediction]:
+        result = []
+        for sample in samples:
+            if not isinstance(sample, ProgressSample):
+                raise TypeError(f"{self.config.name} only supports progress samples")
+            reference_path = sample.trajectory.metadata.get("reference_video_path")
+            values = np.asarray(
+                self.compute_progress(
+                    np.asarray(sample.trajectory.frames),
+                    sample.trajectory.task,
+                    str(reference_path) if reference_path else None,
+                ),
+                dtype=float,
+            ).reshape(-1)
+            expected = len(sample.trajectory.frames)
+            if len(values) != expected:
+                raise ValueError(f"Progress length mismatch: expected {expected}, got {len(values)}")
+            if not np.isfinite(values).all():
+                raise ValueError("Progress values must be finite")
+            if ((values < 0) | (values > 1)).any():
+                raise ValueError("Progress values must be in [0, 1]")
+            result.append(
+                ProgressPrediction(
+                    sample_id=sample.sample_id,
+                    progress=values.tolist(),
+                    model=self.config.model_id or self.config.model_path or self.config.name,
+                    model_version=self.config.model_version,
+                )
+            )
+        return result
 
     def begin_prediction(self) -> None:
         self.client.begin_prediction()

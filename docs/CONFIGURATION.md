@@ -10,7 +10,6 @@ sampling:
   max_trajectories: 1
   eval_types: [reward_alignment]
   base_frames: 3
-  pad_frames: false
   progress_type: absolute_first_frame
 
 infer:
@@ -55,7 +54,6 @@ resume: false
 | `max_trajectories` | 最多读取的轨迹数 |
 | `eval_types` | 需要构造的评测类型 |
 | `base_frames` | 基准采样帧数；`reward_alignment` 等普通采样直接按此数量抽帧 |
-| `pad_frames` | 帧数不足时是否补齐 |
 | `progress_type` | progress 真值的定义方式 |
 | `temporal_robustness` | `synthetic_temporal_robustness` 的最终帧数上限、变换类型、数量与参数范围 |
 
@@ -82,8 +80,7 @@ sampling:
 `sampling.base_frames` 表示变换前的采样数量，`sampling.temporal_robustness.max_frames` 表示变换后的最终硬上限。合成序列长度始终位于
 `ceil(min_length_ratio × base_frames)` 与
 `min(floor(max_length_ratio × base_frames), max_frames)` 之间。默认最多减少 30%、最多增加 70%。Pause、Rewind
-和 Retry 需要 `base_frames < max_frames`；该评测要求 `base_frames >= 5`、`temporal_robustness.max_frames >= 6`，且不支持 `pad_frames` 或
-`relative_first_frame`。
+和 Retry 需要 `base_frames < max_frames`；该评测要求 `base_frames >= 5`、`temporal_robustness.max_frames >= 6`.
 
 各变换的参数范围可通过 `pause_extra_ratio_range`、`slow_gamma_range`、`fast_gamma_range`、
 `peak_progress_range`、`retreat_ratio_range`、`rewind_extra_ratio_range`、`retry_extra_ratio_range`、
