@@ -52,7 +52,13 @@ resume: false
 | `max_trajectories` | 最多读取的轨迹数 |
 | `eval_types` | 需要构造的评测类型 |
 | `base_frames` | 基准采样帧数；`progress` 等普通采样直接按此数量抽帧 |
-| `progress_type` | progress 真值的定义方式 |
+| `progress_type` | progress 真值定义：`absolute_first_frame`、`absolute_wrt_total_frames` 或 `relative_first_frame` |
+| `num_examples_per_quality` | `policy_ranking` 每个质量等级最多选择的轨迹数，默认 `5` |
+| `num_partial_successes` | `policy_ranking` 使用连续完成度时，每个任务最多选择的轨迹数 |
+| `max_tasks` | `policy_ranking` 最多评测的任务数 |
+| `comparisons_per_task` | `quality_preference` 每个任务最多生成的比较对数 |
+| `max_comparisons` | `quality_preference` 全局最多生成的比较对数 |
+| `trajectories_per_source` | `confusion_matrix` 每个数据来源最多选择的轨迹数 |
 | `temporal_robustness` | `progress_temporal_variation` 的最终帧数上限、变换类型、数量与参数范围 |
 
 相对路径以运行命令时的当前目录为基准。目录结构与字段要求见 [本地 Hugging Face Dataset](DATASETS.md)。
@@ -68,6 +74,7 @@ sampling:
   base_frames: 9                # 变换前的基准采样数量
   progress_type: absolute_first_frame
   temporal_robustness:
+    random_seed: 42
     max_frames: 16              # 变换后的最终硬上限
     min_length_ratio: 0.7
     max_length_ratio: 1.7
@@ -82,7 +89,8 @@ sampling:
 
 各变换的参数范围可通过 `pause_extra_ratio_range`、`slow_gamma_range`、`fast_gamma_range`、
 `peak_progress_range`、`retreat_ratio_range`、`rewind_extra_ratio_range`、`retry_extra_ratio_range`、
-`truncate_retained_ratio_range` 和 `skip_removed_ratio_range` 调整。所有随机结果由 `random_seed` 稳定决定。
+`truncate_retained_ratio_range` 和 `skip_removed_ratio_range` 调整。所有随机结果由
+`sampling.temporal_robustness.random_seed` 稳定决定。
 
 ## `infer`
 
@@ -102,9 +110,11 @@ sampling:
 | `headers` | 附加 HTTP header |
 | `options` | 传给具体 baseline 的扩展配置 |
 
+除 `name` 外，`infer` 字段均有默认值或允许为空；但具体 baseline 可以在构造时要求额外字段。
+
 框架不区分 local/remote，也不存在 transport 或 max_concurrency 分派。Runner 直接构造
-`INFERS.get(name)` 返回的类。未实现 `predict_batch()` 的 baseline 仍逐样本调用 `predict()`；实现该可选接口后，Runner
-会把最多 `infer.batch_size` 个样本一次传入。模型使用 checkpoint、provider SDK 或 HTTP client 由自身实现决定。
+`INFERS.get(name)` 返回的类，并按 `infer.batch_size` 将 `list[EvaluationSample]` 传给统一的 `predict()`。
+模型使用 checkpoint、provider SDK 或 HTTP client 由自身实现决定。
 
 配置示例：
 
@@ -140,7 +150,7 @@ infer:
 
 推荐只在配置中保存环境变量名。`base_url`、`api_key`、`model_id` 和 `model_path` 中的全大写标识符会被解析为环境变量；变量缺失时配置初始化会报错。CLI 不会自动读取 `.env`。
 
-各 baseline 的构造、`compute_progress`/`compute_preference` 与 `predict` 契约见 [Infer 模型接入](INFER_MODELS.md)。
+各 baseline 的构造、批量 `predict` 与 Prediction 契约见 [Infer 模型接入](INFER_MODELS.md)。
 
 ## `metrics`
 
@@ -153,9 +163,9 @@ metrics: [progress]
 查看注册项：
 
 ```bash
-python -m prmeval.cli list-samplers
-python -m prmeval.cli list-infers
-python -m prmeval.cli list-metrics
+prmeval list-samplers
+prmeval list-infers
+prmeval list-metrics
 ```
 
 ## 输出目录与续跑

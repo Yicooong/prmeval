@@ -3,17 +3,16 @@
 这个目录现在是 **Stage 2 的输入 bundle**，不是 Stage 2 的模拟输出。
 
 - `samples.jsonl`：3 条 `bench.record.v1` sampled Record，全部尚无 `execution`；
-- `sample_frames/*.npz`：Stage 2 实际读取的帧数组；
-- `samples.manifest.json`：Stage 1 生成该 bundle 时的采样清单。
+- `sample_frames/*.npz`：Stage 2 实际读取的帧数组。
 
 `samples.jsonl` 中不包含 `infer`、`prediction` 或 `execution`。推理后，这些字段才会出现在指定的 `predictions.jsonl` 中。
 
 先验证 Stage 2 输入及 NPZ 校验和：
 
 ```bash
-python -m prmeval.cli validate-samples \
+prmeval validate-samples \
   --samples examples/stage_2_smoke/samples.jsonl
-```s
+```
 
 调用 `progress_test` infer：
 
@@ -21,7 +20,7 @@ python -m prmeval.cli validate-samples \
 export OPENAI_API_KEY='your-key'
 export BASE_URL='https://your-service.example.com/v1'
 export MODEL_ID='your-model-id'
-python -m prmeval.cli infer \
+prmeval infer \
   --config configs/eval/progress_test_remote.yaml \
   --samples examples/stage_2_smoke/samples.jsonl \
   --output evaluation_output/progress-test-smoke/predictions.jsonl

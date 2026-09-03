@@ -49,7 +49,8 @@ EvalSampler.pool (local Hugging Face Dataset)
 
 当前 v1 不包含 prefix sampling。一条 `sample_id` 对应一次模型请求和一条完整预测曲线。
 
-对于 `progress`，采样器选择可用的成功轨迹，按 `base_frames` 均匀抽帧，并使用相同帧索引构造 `target.progress`。默认的 `absolute_first_frame` 定义为：
+对于 `progress`，采样器选择可用的成功轨迹，按 `base_frames` 均匀抽帧，并使用相同帧索引构造
+`target(kind=progress).values`。默认的 `absolute_first_frame` 定义为：
 
 ```text
 progress = (frame_index - first_index) / (total_frames - first_index - 1)
@@ -58,7 +59,7 @@ progress = (frame_index - first_index) / (total_frames - first_index - 1)
 因此第一帧为 `0`，最后一帧为 `1`。每条记录必须满足：
 
 ```text
-NPZ 帧数量 = frame_indices 数量 = target.progress 数量
+NPZ 帧数量 = frame_indices 数量 = target.values 数量
 ```
 
 `progress_temporal_variation` 先从成功轨迹得到一条基准采样序列，再通过索引映射派生停滞、变速、
@@ -72,28 +73,33 @@ input item 的 `synthetic_temporal` metadata 中。默认长度限制为基准�
 运行并验证 Stage 1：
 
 ```bash
-python -m prmeval.cli sample --config configs/eval/progress_test_remote.yaml
-python -m prmeval.cli validate-samples \
-  --samples evaluation_output/jsonl-progress-full-smoke/samples.jsonl
+prmeval sample --config configs/eval/progress_test_remote.yaml
+prmeval validate-samples \
+  --samples evaluation_output/progress-test-remote/samples.jsonl
 ```
 
 ## Stage 2：单入口模型推理
 
-Stage 2 只接收尚无 `execution` 的 sampled Record。它加载 NPZ 帧，通过 registry 直接构造具体 baseline，并按样本顺序调用统一的 `predict()`：
+Stage 2 只接收尚无 `execution` 的 sampled Record。它加载 NPZ 帧，通过 registry 直接构造具体 baseline，并按
+`infer.batch_size` 分组调用统一的 `predict(samples)`：
 
 ```text
 Evaluator.infer()
     -> infer_cls = INFERS.get(config.infer.name)
     -> infer = infer_cls(config.infer)
     -> record_to_sample(record, bundle_dir)
-    -> infer.predict(sample)
-    -> ProgressPrediction / PreferencePrediction
+    -> infer.predict(samples)
+    -> list[ProgressPrediction | PreferencePrediction]
     -> EvaluationRecord(execution.status="success|error")
 ```
 
-只有一个抽象父类 `Infer`。框架不区分 local 和 remote，也不提供 adapter、公共 batch、线程池或执行模式分派。checkpoint 加载、provider SDK 和 HTTP 调用均由具体 baseline 自己处理。Runner 只理解 `capabilities` 与标准 Prediction。
+只有一个抽象父类 `Infer`。框架不区分 local 和 remote，也不提供 adapter、线程池或 transport 分派。checkpoint
+加载、provider SDK 和 HTTP 调用均由具体 baseline 自己处理。Runner 只理解 `capabilities`、批量 `predict()`
+和标准 Prediction。
 
-Progress baseline 的 `predict()` 校验 `ProgressSample`，把 frames、task 和可选 reference path 传给本类 `compute_progress()`，再通过共享函数构造 `ProgressPrediction`。共享校验要求输出一维、与输入帧等长、有限并位于 `[0,1]`。RLVLMF 是当前唯一 preference baseline，其 `predict()` 调用 `compute_preference()` 并构造 `PreferencePrediction`。
+Progress baseline 的 `predict()` 接收样本列表，并为每个样本构造一个 `ProgressPrediction`。输出必须与输入数量一致，
+`sample_id` 集合完全相同且不得重复；每条 progress 数组还必须与对应输入帧等长、有限并位于 `[0,1]`。
+当前内置 baseline 都只声明 `progress` 能力；运行 `quality_preference` 需要自行接入声明 `preference` 能力的模型。
 
 标准化结果示例：
 
@@ -105,24 +111,27 @@ Progress baseline 的 `predict()` 校验 `ProgressSample`，把 frames、task �
 }
 ```
 
-成功结果写入 `predictions.jsonl`；失败结果写入 `errors.jsonl`。单个 sample 失败不会中断或污染其他样本。成功的 progress prediction 不保存远程 raw response；远程失败可通过 `RemoteError.raw_response` 写入错误记录。
+成功结果写入 `predictions.jsonl`；失败结果写入 `errors.jsonl`。一个批次抛出异常，或者返回数量/ID 不合法时，
+该批次的所有样本都会记为失败，后续批次继续执行。成功的 progress prediction 不保存远程 raw response；远程失败可通过
+`RemoteError.raw_response` 写入错误记录。
 
-`progress_test` 和 SOLE-R1 在模型实例内部组合 `OpenAIChatClient`，但对 Runner 只暴露普通 `predict()`/`compute_progress()`。模型内部确实需要的 prefix 或 tensor micro-batch 是私有实现细节，不参与 Runner 调度。
+`progress_test` 在模型实例内部组合 `OpenAIChatClient`。模型内部需要的 prefix 或 tensor micro-batch 是 baseline
+私有实现细节，与 Runner 的 `infer.batch_size` 分组相互独立。
 
 Stage 2 不会重新抽帧。普通采样的模型输入帧数由 Stage 1 的 `sampling.base_frames` 控制；时序鲁棒样本还会受 `sampling.temporal_robustness.max_frames` 的最终硬上限约束。这样模型输入、target 和 progress prediction 始终一一对应。接口与注册示例见 [Infer 模型接入](INFER_MODELS.md)，连接和模型字段见 [配置文件说明](CONFIGURATION.md#infer)。
 
 查看已注册 infer：
 
 ```bash
-python -m prmeval.cli list-infers
+prmeval list-infers
 ```
 
 运行并验证 Stage 2：
 
 ```bash
-python -m prmeval.cli infer --config configs/eval/progress_test_remote.yaml
-python -m prmeval.cli validate-predictions \
-  --predictions evaluation_output/jsonl-progress-full-smoke/predictions.jsonl
+prmeval infer --config configs/eval/progress_test_remote.yaml
+prmeval validate-predictions \
+  --predictions evaluation_output/progress-test-remote/predictions.jsonl
 ```
 
 ## Stage 3：指标计算
@@ -153,13 +162,13 @@ Policy ranking 使用 `target(kind=rank).value`、`prediction(kind=progress).val
 运行 Stage 3：
 
 ```bash
-python -m prmeval.cli metrics --config configs/eval/progress_test_remote.yaml
+prmeval metrics --config configs/eval/progress_test_remote.yaml
 ```
 
 也可以不调用模型，直接从已有预测重新计算指标：
 
 ```bash
-python -m prmeval.cli compute-metrics \
+prmeval compute-metrics \
   --predictions examples/stage_3_smoke/predictions.jsonl \
   --metrics progress \
   --output /tmp/prmeval-metrics.json
@@ -213,7 +222,7 @@ evaluation_output/<run_name>/
 连续运行三个阶段：
 
 ```bash
-python -m prmeval.cli run --config configs/eval/progress_test_remote.yaml
+prmeval run --config configs/eval/progress_test_remote.yaml
 ```
 
 顶层 `mode` 控制 `run` 如何连接三个阶段：
@@ -222,8 +231,8 @@ python -m prmeval.cli run --config configs/eval/progress_test_remote.yaml
 - `continue` 从 sampler 迭代器按 `infer.batch_size` 取样本并直接推理，不生成 sample JSONL、sample manifest 或 NPZ。
 
 连续模式的帧数组只存在于当前推理批次的内存中。写入 predictions/errors 前，Runner 会把
-`input.items[].frames` 置为空列表；frame indices、总帧数、target、source 和 metadata 仍会保留。连续模式仍将预测、错误、
-manifest 和 metrics 写到运行目录，`resume: true` 时重新生成稳定 sample ID 并跳过已有成功预测。单独执行
+`input.items[].frames` 置为空列表；frame indices、target、dataset source、source ID 和 metadata 仍会保留。
+连续模式仍将 predictions、errors 和 metrics 写到运行目录，`resume: true` 时重新生成稳定 sample ID 并跳过已有成功预测。单独执行
 `sample`、`infer` 或 `metrics` 不受 `mode` 影响，始终使用磁盘阶段协议。
 
 CLI 默认向 stderr 输出阶段日志，并在交互式终端中展示各阶段进度：Stage 1 统计读取轨迹、生成样本和写入样本，Stage 2 统计已完成的推理样本，Stage 3 统计已计算的指标。断点续跑时，Stage 2 会同时报告待处理和已跳过的样本数。使用 `--no-progress` 可以关闭动态进度条；普通阶段日志不受影响。非交互式 stderr（例如 CI 或输出重定向）会自动禁用动态条，避免产生重复控制字符。
@@ -231,7 +240,7 @@ CLI 默认向 stderr 输出阶段日志，并在交互式终端中展示各阶�
 进度和日志使用 stderr，最终 JSON 摘要使用 stdout。例如下面的命令只将摘要写入文件：
 
 ```bash
-python -m prmeval.cli run --config configs/eval/progress_test_remote.yaml > summary.json
+prmeval run --config configs/eval/progress_test_remote.yaml > summary.json
 ```
 
 也可以通过 Python API 调用：
@@ -253,8 +262,8 @@ metric_summary = evaluator.evaluate_metrics()
 summary = Evaluator(config).run()
 ```
 
-Python API 默认不显示进度。如需在交互式 Python 终端中开启，可以显式传入：
+Python API 默认在交互式 stderr 中显示进度；非交互环境会自动关闭。也可以显式控制：
 
 ```python
-summary = Evaluator(config, show_progress=True).run()
+summary = Evaluator(config, show_progress=False).run()
 ```

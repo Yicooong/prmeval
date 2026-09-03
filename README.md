@@ -22,6 +22,16 @@ PRMEval 支持 Python 3.10 及以上版本。
 pip install -e .
 ```
 
+构建可分发的 wheel 并安装：
+
+```bash
+python -m pip install build
+python -m build --wheel
+pip install dist/prmeval-*.whl
+```
+
+安装后会提供 `prmeval` 命令。
+
 本地 Hugging Face/Qwen-VL 模型使用可选依赖：
 
 ```bash
@@ -32,7 +42,7 @@ pip install -e '.[local-hf,local-qwen]'
 
 仓库提供了调用通用远程模型 `progress_test` 的端到端冒烟配置
 [`configs/eval/progress_test_remote.yaml`](configs/eval/progress_test_remote.yaml)。运行前设置 OpenAI-compatible
-服务信息：
+服务信息，并将配置中的 `sampling.paths` 改为由 `datasets.save_to_disk()` 保存的本地 Dataset 目录：
 
 ```bash
 export OPENAI_API_KEY='your-api-key'
@@ -43,40 +53,41 @@ export MODEL_ID='your-model-id'
 连续执行采样、推理和指标计算：
 
 ```bash
-python -m prmeval.cli run --config configs/eval/progress_test_remote.yaml
+prmeval run --config configs/eval/progress_test_remote.yaml
 ```
 
 命令行会在交互式终端中使用 `tqdm` 分别展示 Sample、Infer 和 Metrics 三个阶段的进度，并输出阶段开始、完成及断点续跑跳过数量。动态进度写入 stderr，最终 JSON 摘要写入 stdout，因此可以安全地重定向结果：
 
 ```bash
-python -m prmeval.cli run --config configs/eval/progress_test_remote.yaml > summary.json
+prmeval run --config configs/eval/progress_test_remote.yaml > summary.json
 ```
 
 在 CI、管道等非交互环境中，动态进度条会自动关闭，阶段日志仍会保留。也可以手动关闭动态进度条：
 
 ```bash
-python -m prmeval.cli run --config configs/eval/progress_test_remote.yaml --no-progress
+prmeval run --config configs/eval/progress_test_remote.yaml --no-progress
 ```
 
 也可以单独运行各阶段：
 
 ```bash
-python -m prmeval.cli sample --config configs/eval/progress_test_remote.yaml
-python -m prmeval.cli infer --config configs/eval/progress_test_remote.yaml
-python -m prmeval.cli metrics --config configs/eval/progress_test_remote.yaml
+prmeval sample --config configs/eval/progress_test_remote.yaml
+prmeval infer --config configs/eval/progress_test_remote.yaml
+prmeval metrics --config configs/eval/progress_test_remote.yaml
 ```
 查看已注册组件：
 
 ```bash
-python -m prmeval.cli list-samplers
-python -m prmeval.cli list-infers
-python -m prmeval.cli list-metrics
+prmeval list-samplers
+prmeval list-infers
+prmeval list-metrics
 ```
 
 完整命令和验证方式见 [三阶段评测流程](docs/PIPELINE.md)，冒烟测试的输入与预期产物见 [完整冒烟测试说明](examples/stage_full_smoke/README.md)。
 
 ## 文档
 
+- [安装与 wheel 构建](docs/INSTALLATION.md)
 - [配置文件说明](docs/CONFIGURATION.md)
 - [Infer 模型接入](docs/INFER_MODELS.md)
 - [三阶段评测流程](docs/PIPELINE.md)

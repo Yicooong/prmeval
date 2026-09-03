@@ -52,8 +52,8 @@ Runner 每次运行只加载一次 Dataset，并把同一个 pool 列表注入�
 progress 与 progress temporal variation 采样中直接复用所提供的目标进度（抽帧后按相同索引取值），
 不会再按 `progress_type` 计算目标进度；长度不一致会在采样时直接报错。
 
-由 `dataset_unify` 生成的标准 Dataset 可直接用于采样。MP4 解码优先使用 PyAV，不可用时回退到系统
-`ffmpeg`/`ffprobe`。
+由 `dataset_unify` 生成的标准 Dataset 可直接用于采样。当前公共帧加载器使用 OpenCV 解码视频，并支持图片目录、
+`.npy`、`.npz`、内嵌 THWC 数组以及 Hugging Face video mapping。数值帧最终统一为 RGB `uint8` 数组。
 
 ## 完整数据边界
 

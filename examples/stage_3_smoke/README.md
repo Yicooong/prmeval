@@ -7,7 +7,7 @@ For the canonical unified v1 format and progress-only debugging, use
 Run all metrics found in the file:
 
 ```bash
-prmeval-eval compute-metrics \
+prmeval compute-metrics \
   --predictions examples/stage_3_smoke/predictions.jsonl \
   --output examples/stage_3_smoke/metrics.json
 ```
