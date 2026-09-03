@@ -1,0 +1,14 @@
+dataset:
+  dataset_name: simulator_rollout
+  dataset_path: /path/to/simulator_rollout/samples.jsonl
+  view: external_main
+
+output:
+  output_dir: /path/to/prmeval-datasets
+  use_video: true
+  fps: 10
+  shortest_edge_size: 240
+  center_crop: false
+  max_trajectories: -1
+  max_frames: -1
+  num_workers: 4

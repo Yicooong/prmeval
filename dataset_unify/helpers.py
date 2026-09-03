@@ -366,6 +366,13 @@ def create_hf_trajectory(
         quality_label = str(quality_label)
     partial_success = traj_dict.get("partial_success", None)
     data_source = traj_dict.get("data_source", dataset_name)
+    is_simulation = bool(traj_dict.get("is_simulation", False))
+    target_progress = traj_dict.get("target_progress")
+    if target_progress is not None:
+        target_progress = [float(value) for value in target_progress]
+        if max_frames != -1 and len(target_progress) > max_frames:
+            indices = np.unique(np.linspace(0, len(target_progress) - 1, max_frames, dtype=int))
+            target_progress = [target_progress[index] for index in indices]
 
     # Create dataset trajectory
     trajectory = {
@@ -374,8 +381,10 @@ def create_hf_trajectory(
         "data_source": data_source,
         "frames": video_path,
         "is_robot": is_robot,
+        "is_simulation": is_simulation,
         "quality_label": quality_label,
         "partial_success": partial_success,
+        "target_progress": target_progress,
     }
 
     return trajectory
