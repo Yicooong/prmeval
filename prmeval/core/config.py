@@ -13,7 +13,7 @@ TemporalTransform = Literal["pause", "slow", "fast", "rewind", "retry", "truncat
 
 class TemporalRobustnessConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
-
+    random_seed: int = 42
     max_frames: int = Field(default=16, ge=1)
     min_length_ratio: float = Field(default=0.7, ge=0.7, le=1.0)
     max_length_ratio: float = Field(default=1.7, ge=1.0, le=1.7)
@@ -68,7 +68,7 @@ class SamplingConfig(BaseModel):
     progress_type: Literal["absolute_first_frame", "absolute_wrt_total_frames", "relative_first_frame"] = (
         "absolute_first_frame"
     )
-    random_seed: int = 42
+    
     num_examples_per_quality: int | None = Field(default=5, ge=1)
     num_partial_successes: int | None = Field(default=None, ge=1)
     max_tasks: int | None = Field(default=None, ge=1)

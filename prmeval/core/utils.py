@@ -3,19 +3,24 @@
 from __future__ import annotations
 
 import hashlib
+import itertools
 import json
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from pathlib import Path
+from typing import TypeVar
 
 import numpy as np
 
-from ..sample import load_frames
+from ..sample import EvalSampler, load_frames
 from .schemas import (
     EvaluationRecord,
     EvaluationSample,
     FrameReference,
+    Prediction,
+    PreferencePrediction,
     PreferenceSample,
+    ProgressPrediction,
     ProgressSample,
     RecordInputItem,
     Trajectory,
@@ -25,6 +30,49 @@ from .schemas import (
 
 SAMPLE_SCHEMA_VERSION = "bench.record.v1"
 QUALITY_RANK = {"successful": 2.0, "suboptimal": 1.0, "failure": 0.0, "failed": 0.0}
+T = TypeVar("T")
+
+
+def batched(iterable: Iterable[T], batch_size: int) -> Iterator[list[T]]:
+    """Yield items in lists of at most ``batch_size`` elements."""
+    if batch_size < 1:
+        raise ValueError("batch_size must be positive")
+    iterator = iter(iterable)
+    while batch := list(itertools.islice(iterator, batch_size)):
+        yield batch
+
+
+def read_jsonl(path: Path) -> list[dict]:
+    """Read non-empty JSON Lines rows, returning an empty list for a missing file."""
+    if not path.exists():
+        return []
+    rows = []
+    with path.open(encoding="utf-8") as handle:
+        for line in handle:
+            if line.strip():
+                rows.append(json.loads(line))
+    return rows
+
+
+def iter_sampler_samples(samplers: Iterable[EvalSampler]) -> Iterator[EvaluationSample]:
+    """Yield every sample produced by each sampler in order."""
+    for sampler in samplers:
+        yield from sampler.sample()
+
+
+def validate_prediction_for_sample(sample: EvaluationSample, prediction: Prediction) -> None:
+    """Validate that an inference prediction matches its source sample."""
+    if prediction.sample_id != sample.sample_id:
+        raise ValueError(f"Prediction sample_id mismatch: expected {sample.sample_id}, got {prediction.sample_id}")
+    if sample.sample_type == "progress" and not isinstance(prediction, ProgressPrediction):
+        raise TypeError(f"Progress sample requires ProgressPrediction, got {type(prediction).__name__}")
+    if sample.sample_type == "preference" and not isinstance(prediction, PreferencePrediction):
+        raise TypeError(f"Preference sample requires PreferencePrediction, got {type(prediction).__name__}")
+    if isinstance(prediction, ProgressPrediction):
+        expected = len(sample.trajectory.frames)
+        actual = len(prediction.progress)
+        if actual != expected:
+            raise ValueError(f"Progress length mismatch: expected {expected}, got {actual}")
 
 
 def _file_sha256(path: Path) -> str:
@@ -276,3 +324,33 @@ def validate_sample_artifacts(path: Path) -> dict:
         "eval_types": dict(sorted(counts.items())),
         "path": str(path),
     }
+
+
+def write_metric_details(path: Path, records: list[EvaluationRecord], metrics: dict) -> None:
+    """Write per-record and per-group metric details as JSON Lines."""
+    record_rows = {
+        record.sample_id: {
+            "detail_type": "record",
+            **jsonable(record),
+            "metrics": {},
+        }
+        for record in records
+    }
+    group_rows = []
+    for metric_name, result in metrics.items():
+        for sample_id, detail in result.get("details", {}).items():
+            if sample_id in record_rows:
+                record_rows[sample_id]["metrics"][metric_name] = detail
+        for group_id, detail in result.get("task_details", {}).items():
+            group_rows.append(
+                {
+                    "detail_type": "group",
+                    "metric": metric_name,
+                    "group_id": group_id,
+                    **detail,
+                }
+            )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        for row in [*record_rows.values(), *group_rows]:
+            handle.write(json.dumps(jsonable(row), ensure_ascii=False) + "\n")

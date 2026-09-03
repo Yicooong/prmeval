@@ -142,7 +142,7 @@ class ProgressTemporalVariationSampler(EvalSampler):
             )
             for transform, variant in variants:
                 rng = self._temporal_rng(
-                    self.config.random_seed,
+                    self.config.temporal_robustness.random_seed,
                     self.dataset_name,
                     trajectory.data_source,
                     trajectory.id,
@@ -212,7 +212,7 @@ class PolicyRankingSampler(EvalSampler):
             if key is not None:
                 groups[traj.task][key].append(traj)
         eligible = [(task, values) for task, values in sorted(groups.items()) if len(values) > 1]
-        rng = random.Random(self.config.random_seed)
+        rng = random.Random(self.config.temporal_robustness.random_seed)
         if self.config.max_tasks and len(eligible) > self.config.max_tasks:
             rng.shuffle(eligible)
             eligible = eligible[: self.config.max_tasks]
@@ -253,7 +253,7 @@ class ConfusionMatrixSampler(EvalSampler):
     eval_type = "confusion_matrix"
 
     def sample(self):
-        rng = random.Random(self.config.random_seed)
+        rng = random.Random(self.config.temporal_robustness.random_seed)
         tasks = sorted({trajectory.task for trajectory in self.pool})
         by_source: dict[str, dict[str, list[Trajectory]]] = defaultdict(lambda: defaultdict(list))
         for trajectory in self.pool:
@@ -314,7 +314,7 @@ class QualityPreferenceSampler(EvalSampler):
                 rank = self.quality_rank.get(traj.quality_label or "")
             if rank is not None:
                 by_task[traj.task][round(float(rank), 2)].append(traj)
-        rng = random.Random(self.config.random_seed)
+        rng = random.Random(self.config.temporal_robustness.random_seed)
         pairs: list[tuple[Trajectory, Trajectory]] = []
         for rank_groups in by_task.values():
             task_pairs = []
@@ -347,5 +347,5 @@ class QualityPreferenceSampler(EvalSampler):
 def create_samplers(
     config: SamplingConfig,
     pool: list[Trajectory] | None = None,
-) -> EvalSampler:
+) -> list[EvalSampler]:
     return [SAMPLERS.get(eval_type)(config, config.dataset_name, pool=pool) for eval_type in config.eval_types]

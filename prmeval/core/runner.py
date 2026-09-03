@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import itertools
 import json
 import logging
 import sys
@@ -8,6 +7,7 @@ from collections import Counter
 from collections.abc import Iterable
 from pathlib import Path
 from typing import TypeVar
+from statistics import mean
 
 from tqdm import tqdm
 
@@ -24,32 +24,20 @@ from .schemas import (
     jsonable,
 )
 from .utils import (
+    batched,
+    iter_sampler_samples,
     load_sample_artifacts,
+    read_jsonl,
     record_to_sample,
     sample_to_record,
     strip_record_frames,
+    validate_prediction_for_sample,
+    write_metric_details,
     write_sample_artifacts,
 )
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T")
-
-
-def _batched(iterable: Iterable[T], size: int) -> Iterable[list[T]]:
-    iterator = iter(iterable)
-    while batch := list(itertools.islice(iterator, size)):
-        yield batch
-
-
-def _read_jsonl(path: Path) -> list[dict]:
-    if not path.exists():
-        return []
-    rows = []
-    with path.open(encoding="utf-8") as handle:
-        for line in handle:
-            if line.strip():
-                rows.append(json.loads(line))
-    return rows
 
 
 class Evaluator:
@@ -64,7 +52,7 @@ class Evaluator:
         self.metrics_path = self.output_dir / "metrics.json"
         self.metrics_detail_path = self.output_dir / "metrics_detail.jsonl"
 
-    def _tqdm(
+    def _with_progress(
         self,
         iterable: Iterable[T],
         *,
@@ -83,13 +71,13 @@ class Evaluator:
             dynamic_ncols=True,
         )
 
-    def _prepare_inference(self) -> set[str]:
+    def _prepare_inference_outputs(self) -> set[str]:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         if not self.config.resume:
             self.predictions_path.write_text("", encoding="utf-8")
             self.errors_path.write_text("", encoding="utf-8")
             return set()
-        records = [EvaluationRecord.model_validate(row) for row in _read_jsonl(self.predictions_path)]
+        records = [EvaluationRecord.model_validate(row) for row in read_jsonl(self.predictions_path)]
         if any(not record.execution or record.execution.status != "success" for record in records):
             raise ValueError(f"Prediction checkpoint contains a non-success record: {self.predictions_path}")
         completed = [record.sample_id for record in records]
@@ -97,10 +85,10 @@ class Evaluator:
             raise ValueError(f"Duplicate successful sample_id found in {self.predictions_path}")
         return set(completed)
 
-    def _coverage(self, *, total: int, executed: int, skipped: int) -> dict[str, int]:
-        successful_ids = {row["sample_id"] for row in _read_jsonl(self.predictions_path)}
+    def _build_coverage_summary(self, *, total: int, executed: int, skipped: int) -> dict[str, int]:
+        successful_ids = {row["sample_id"] for row in read_jsonl(self.predictions_path)}
         failed_ids = {
-            row["sample_id"] for row in _read_jsonl(self.errors_path) if row["sample_id"] not in successful_ids
+            row["sample_id"] for row in read_jsonl(self.errors_path) if row["sample_id"] not in successful_ids
         }
         return {
             "total": total,
@@ -110,7 +98,7 @@ class Evaluator:
             "skipped": skipped,
         }
 
-    def _record_for(
+    def _build_inference_record(
         self,
         source: EvaluationRecord,
         prediction=None,
@@ -153,21 +141,7 @@ class Evaluator:
         )
         return EvaluationRecord.model_validate(payload)
 
-    @staticmethod
-    def _validate_prediction(sample, prediction) -> None:
-        if prediction.sample_id != sample.sample_id:
-            raise ValueError(f"Prediction sample_id mismatch: expected {sample.sample_id}, got {prediction.sample_id}")
-        if sample.sample_type == "progress" and not isinstance(prediction, ProgressPrediction):
-            raise TypeError(f"Progress sample requires ProgressPrediction, got {type(prediction).__name__}")
-        if sample.sample_type == "preference" and not isinstance(prediction, PreferencePrediction):
-            raise TypeError(f"Preference sample requires PreferencePrediction, got {type(prediction).__name__}")
-        if isinstance(prediction, ProgressPrediction):
-            expected = len(sample.trajectory.frames)
-            actual = len(prediction.progress)
-            if actual != expected:
-                raise ValueError(f"Progress length mismatch: expected {expected}, got {actual}")
-
-    def _predict_batch(
+    def _run_inference_batch(
         self,
         infer: Infer,
         sources: list[EvaluationRecord],
@@ -179,7 +153,7 @@ class Evaluator:
             infer.begin_prediction()
             predictions = infer.predict(samples)
             if not isinstance(predictions, list):
-                raise TypeError(f"predict_batch() must return a list, got {type(predictions).__name__}")
+                raise TypeError(f"Infer.predict() must return a list, got {type(predictions).__name__}")
             expected_ids = [sample.sample_id for sample in samples]
             actual_ids = [prediction.sample_id for prediction in predictions]
             if len(predictions) != len(samples):
@@ -194,12 +168,12 @@ class Evaluator:
             records = []
             for source, sample in zip(sources, samples, strict=True):
                 prediction = by_id[sample.sample_id]
-                self._validate_prediction(sample, prediction)
-                records.append(self._record_for(source, prediction=prediction))
+                validate_prediction_for_sample(sample, prediction)
+                records.append(self._build_inference_record(source, prediction=prediction))
             return records
         except Exception as exc:
             return [
-                self._record_for(
+                self._build_inference_record(
                     source,
                     error=f"{type(exc).__name__}: {exc}",
                     error_response=getattr(exc, "raw_response", None),
@@ -207,13 +181,7 @@ class Evaluator:
                 for source in sources
             ]
 
-    def _write_inference_record(self, record: EvaluationRecord) -> None:
-        target = self.errors_path if record.execution and record.execution.status == "error" else self.predictions_path
-        with target.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(jsonable(record), ensure_ascii=False) + "\n")
-            handle.flush()
-
-    def _write_inference_records(self, records: list[EvaluationRecord]) -> None:
+    def _append_inference_records(self, records: Iterable[EvaluationRecord]) -> None:
         grouped = {
             self.predictions_path: [],
             self.errors_path: [],
@@ -235,14 +203,9 @@ class Evaluator:
                 handle.writelines(json.dumps(jsonable(record), ensure_ascii=False) + "\n" for record in target_records)
                 handle.flush()
 
-    def _samplers(self) -> list[EvalSampler]:
+    def _create_samplers(self) -> list[EvalSampler]:
         pool = load_hf_trajectory_pool(self.config.sampling)
         return create_samplers(self.config.sampling, pool=pool)
-
-    @staticmethod
-    def _samples(samplers: Iterable[EvalSampler]) -> Iterable:
-        for sampler in samplers:
-            yield from sampler.sample()
 
     def sample(self, samples_path: str | Path | None = None) -> dict:
         """Stage 1: load a Hugging Face Dataset, sample it, and write the portable sample protocol."""
@@ -269,10 +232,10 @@ class Evaluator:
             )
             return summary
 
-        samplers = self._samplers()
+        samplers = self._create_samplers()
         samples = list(
-            self._tqdm(
-                self._samples(samplers),
+            self._with_progress(
+                iter_sampler_samples(samplers),
                 description="Stage 1/3 Generate samples",
                 unit="sample",
             )
@@ -282,7 +245,7 @@ class Evaluator:
                 f"Sampling produced no samples for eval types: {', '.join(self.config.sampling.eval_types)}"
             )
         summary = write_sample_artifacts(
-            self._tqdm(
+            self._with_progress(
                 samples,
                 description="Stage 1/3 Write samples",
                 unit="sample",
@@ -320,7 +283,7 @@ class Evaluator:
         unsupported = required - infer_cls.capabilities
         if unsupported:
             raise ValueError(f"Infer '{self.config.infer.name}' does not support: {', '.join(sorted(unsupported))}")
-        completed = self._prepare_inference()
+        completed = self._prepare_inference_outputs()
         records_to_run = [record for record in all_records if record.sample_id not in completed]
         logger.info(
             "Stage 2/3 Infer workload: %d pending, %d skipped",
@@ -328,14 +291,14 @@ class Evaluator:
             len(completed),
         )
         new_records: list[EvaluationRecord] = []
-        pending_records = self._tqdm(
+        pending_records = self._with_progress(
             records_to_run,
             description=f"Stage 2/3 Infer (skipped={len(completed)})",
             unit="sample",
             total=len(records_to_run),
         )
         infer = infer_cls(self.config.infer) if records_to_run else None
-        for source_batch in _batched(pending_records, self.config.infer.batch_size):
+        for source_batch in batched(pending_records, self.config.infer.batch_size):
             runtime_sources: list[EvaluationRecord] = []
             runtime_samples = []
             for source_record in source_batch:
@@ -343,18 +306,20 @@ class Evaluator:
                     runtime_samples.append(record_to_sample(source_record, source.parent))
                     runtime_sources.append(source_record)
                 except Exception as exc:
-                    record = self._record_for(
+                    record = self._build_inference_record(
                         source_record,
                         error=f"{type(exc).__name__}: {exc}",
                         error_response=getattr(exc, "raw_response", None),
                     )
                     new_records.append(record)
-                    self._write_inference_record(record)
-            for record in self._predict_batch(infer, runtime_sources, runtime_samples):  # type: ignore[arg-type]
-                new_records.append(record)
-                self._write_inference_record(record)
+                    self._append_inference_records([record])
+            inferred_records = self._run_inference_batch(infer, runtime_sources, runtime_samples)  # type: ignore[arg-type]
+            new_records.extend(inferred_records)
+            self._append_inference_records(inferred_records)
         summary = {
-            "coverage": self._coverage(total=len(all_records), executed=len(new_records), skipped=len(completed)),
+            "coverage": self._build_coverage_summary(
+                total=len(all_records), executed=len(new_records), skipped=len(completed)
+            ),
             "samples": str(source),
             "predictions": str(self.predictions_path),
             "errors": str(self.errors_path),
@@ -368,29 +333,30 @@ class Evaluator:
         )
         return summary
 
-    def _continuous_infer(self) -> dict:
+    def _infer_continuously(self) -> dict:
         """Sample and infer in bounded batches without materializing Stage-1 artifacts."""
         logger.info("Stage 1/3 Sample started: in-memory continuous pipeline")
-        sampler = create_samplers(self.config.sampling)[0]
+        samplers = create_samplers(self.config.sampling)
         infer_cls = INFERS.get(self.config.infer.name)
-        eval_types = sampler.eval_type
+        eval_types = [sampler.eval_type for sampler in samplers]
         required = {"preference" if eval_type == "quality_preference" else "progress" for eval_type in eval_types}
         unsupported = required - infer_cls.capabilities
         if unsupported:
             raise ValueError(f"Infer '{self.config.infer.name}' does not support: {', '.join(sorted(unsupported))}")
-        completed = self._prepare_inference()
+        completed = self._prepare_inference_outputs()
 
         generated = 0
         skipped = 0
         executed = 0
         seen: set[str] = set()
-        samples = self._tqdm(
-            sampler.sample(),
+        samples = self._with_progress(
+            iter_sampler_samples(samplers),
             description=f"Stage 1-2/3 Sample and infer (skipped={len(completed)})",
             unit="sample",
+            total=mean([sampler.pool_size for sampler in samplers])
         )
         infer = None
-        for sample_batch in _batched(samples, self.config.infer.batch_size):
+        for sample_batch in batched(samples, self.config.infer.batch_size):
             generated += len(sample_batch)
             runtime_samples = []
             runtime_records = []
@@ -406,22 +372,22 @@ class Evaluator:
                 runtime_records.append(strip_record_frames(record))
             if runtime_samples:
                 infer = infer or infer_cls(self.config.infer)
-                records = self._predict_batch(infer, runtime_records, runtime_samples)
+                records = self._run_inference_batch(infer, runtime_records, runtime_samples)
                 executed += len(records)
-                self._write_inference_records(records)
+                self._append_inference_records(records)
         if generated == 0:
             raise ValueError(
                 f"Sampling produced no samples for eval types: {', '.join(self.config.sampling.eval_types)}"
             )
         summary = {
-            "coverage": self._coverage(total=generated, executed=executed, skipped=skipped),
+            "coverage": self._build_coverage_summary(total=generated, executed=executed, skipped=skipped),
             "samples": None,
             "predictions": str(self.predictions_path),
             "errors": str(self.errors_path),
             "execution": {
                 "mode": "continue",
                 "batch_size": self.config.infer.batch_size,
-                "trajectories": sampler.pool_size ,
+                "trajectories": max((sampler.pool_size for sampler in samplers), default=0),
                 "samples": generated,
             },
         }
@@ -434,33 +400,6 @@ class Evaluator:
         )
         return summary
 
-    def _write_metric_details(self, records: list[EvaluationRecord], metrics: dict) -> None:
-        record_rows = {
-            record.sample_id: {
-                "detail_type": "record",
-                **jsonable(record),
-                "metrics": {},
-            }
-            for record in records
-        }
-        group_rows = []
-        for metric_name, result in metrics.items():
-            for sample_id, detail in result.get("details", {}).items():
-                if sample_id in record_rows:
-                    record_rows[sample_id]["metrics"][metric_name] = detail
-            for group_id, detail in result.get("task_details", {}).items():
-                group_rows.append(
-                    {
-                        "detail_type": "group",
-                        "metric": metric_name,
-                        "group_id": group_id,
-                        **detail,
-                    }
-                )
-        with self.metrics_detail_path.open("w", encoding="utf-8") as handle:
-            for row in [*record_rows.values(), *group_rows]:
-                handle.write(json.dumps(jsonable(row), ensure_ascii=False) + "\n")
-
     def evaluate_metrics(
         self,
         predictions_path: str | Path | None = None,
@@ -470,7 +409,7 @@ class Evaluator:
         """Stage 3: compute metrics from complete post-model EvaluationRecords only."""
         source = Path(predictions_path) if predictions_path else self.predictions_path
         logger.info("Stage 3/3 Metrics started: %s", source)
-        records = [EvaluationRecord.model_validate(row) for row in _read_jsonl(source)]
+        records = [EvaluationRecord.model_validate(row) for row in read_jsonl(source)]
         if not records:
             raise ValueError(f"No successful EvaluationRecord rows found in {source}")
         if any(not record.execution or record.execution.status != "success" for record in records):
@@ -484,7 +423,7 @@ class Evaluator:
         metric_names = self.config.metrics or self.config.sampling.eval_types
         metrics = compute_metrics(
             records,
-            self._tqdm(
+            self._with_progress(
                 metric_names,
                 description="Stage 3/3 Compute metrics",
                 unit="metric",
@@ -494,7 +433,7 @@ class Evaluator:
         if coverage is None:
             successful_ids = {record.sample_id for record in records}
             failed = (
-                len({row["sample_id"] for row in _read_jsonl(self.errors_path)} - successful_ids)
+                len({row["sample_id"] for row in read_jsonl(self.errors_path)} - successful_ids)
                 if source == self.predictions_path
                 else 0
             )
@@ -517,7 +456,7 @@ class Evaluator:
         }
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.metrics_path.write_text(json.dumps(jsonable(summary), indent=2, ensure_ascii=False), encoding="utf-8")
-        self._write_metric_details(records, metrics)
+        write_metric_details(self.metrics_detail_path, records, metrics)
         logger.info(
             "Stage 3/3 Metrics completed: %d metrics from %d predictions",
             len(metrics),
@@ -528,7 +467,7 @@ class Evaluator:
     def run(self) -> dict:
         """Convenience orchestration for stage 1 -> stage 2 -> stage 3."""
         if self.config.mode == "continue":
-            inference = self._continuous_infer()
+            inference = self._infer_continuously()
         else:
             self.sample()
             inference = self.infer()
