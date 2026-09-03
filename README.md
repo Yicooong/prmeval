@@ -68,7 +68,6 @@ python -m prmeval.cli metrics --config configs/eval/progress_test_remote.yaml
 查看已注册组件：
 
 ```bash
-python -m prmeval.cli list-datasets
 python -m prmeval.cli list-samplers
 python -m prmeval.cli list-infers
 python -m prmeval.cli list-metrics
@@ -83,7 +82,7 @@ python -m prmeval.cli list-metrics
 - [三阶段评测流程](docs/PIPELINE.md)
 - [全流程运行产物说明](docs/ARTIFACTS.md)
 - [EvaluationRecord 数据结构](docs/RECORD_SCHEMA.md)
-- [本地数据格式与 Dataset Adapter](docs/DATASETS.md)
+- [本地 Hugging Face Dataset](docs/DATASETS.md)
 - [原始数据集统一工具](dataset_unify/README.md)
 
 ## 致谢与来源说明

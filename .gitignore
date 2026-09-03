@@ -35,6 +35,7 @@ configs/eval/*
 !configs/eval/synthetic_temporal_robustness.yaml
 !configs/eval/reward_alignment.yaml
 tests/
+AGENTS.md
 # Editor and operating-system temporary files
 .DS_Store
 *.swp

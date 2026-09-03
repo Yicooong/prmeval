@@ -3,7 +3,7 @@ sampling:
   adapter: jsonl
   paths: [examples/stage_1_smoke/trajectories.jsonl]
   max_trajectories: 1
-  eval_types: [reward_alignment]
+  eval_types: [progress]
   base_frames: 3
   progress_type: absolute_first_frame
 
@@ -18,7 +18,7 @@ infer:
   max_tokens: 12800
   options: {}
 
-metrics: [reward_alignment]
+metrics: [progress]
 output_dir: evaluation_output
 run_name: full-smoke
 resume: false

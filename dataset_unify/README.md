@@ -6,8 +6,7 @@
 原始数据集
     -> dataset_unify
     -> 本地标准 Hugging Face Dataset
-    -> prmeval-data-preprocess
-    -> PRMEval DatasetAdapter
+    -> EvalSampler.pool
     -> 采样、推理和指标计算
 ```
 
@@ -24,12 +23,14 @@
 | `data_source` | `str` | 数据来源名称 |
 | `frames` | `str` | 相对于最终 Dataset 根目录的本地 MP4 路径 |
 | `is_robot` | `bool` | 是否为机器人轨迹 |
+| `is_simulation` | `bool` | 是否为模拟轨迹；缺省为 `false` |
 | `quality_label` | `str \| None` | 如 `successful`、`suboptimal`、`failure` |
 | `partial_success` | `float \| None` | `[0, 1]` 范围内的连续完成度 |
+| `target_progress` | `list[float] \| None` | 模拟轨迹的逐帧目标进度，值域为 `[0, 1]` |
 
 标准 Dataset 不包含 `lang_vector`、模型 embedding 或训练索引。当前只支持视频模式；原始 loader 内部可以暂时使用帧数组、可调用加载器或源视频数据，但写入最终 Dataset 前必须转换为本地 MP4 和标准字段。
 
-所有通用和数据集专用 loader 最终都通过 [`hf_schema.py`](hf_schema.py) 的 `build_standard_dataset()` 构造 Dataset。该函数会筛选固定的 7 个字段、保留真正的 `None`、验证 `partial_success` 范围，并将 `success/fail/failed` 规范为 `successful/failure`：
+所有通用和数据集专用 loader 最终都通过 [`hf_schema.py`](hf_schema.py) 的 `build_standard_dataset()` 构造 Dataset。该函数会筛选固定字段、保留真正的 `None`、验证进度值范围，并将 `success/fail/failed` 规范为 `successful/failure`：
 
 ```python
 dataset = build_standard_dataset(entries)
@@ -108,16 +109,15 @@ python -m dataset_unify.validate_dataset \
   /path/to/unified_datasets/<dataset_name>
 ```
 
-校验器会检查严格的 7 字段 schema、主要字段类型、质量标签以及 `partial_success` 的取值范围；缺少字段或包含旧的额外字段都会校验失败。
+校验器会检查严格 schema、主要字段类型、质量标签以及进度字段的取值范围；缺少字段或包含旧的额外字段都会校验失败。
 
 ## 交给 PRMEval 使用
 
-PRMEval 通过 `huggingface` adapter 直接读取统一后的本地 Hugging Face Dataset。视频解码优先使用 PyAV；如果当前环境没有 PyAV，则自动使用系统 `ffmpeg` 和 `ffprobe`。
+PRMEval 通过 `EvalSampler.pool` 直接读取统一后的本地 Hugging Face Dataset。视频解码优先使用 PyAV；如果当前环境没有 PyAV，则自动使用系统 `ffmpeg` 和 `ffprobe`。
 
 ```yaml
 sampling:
   dataset_name: <dataset_name>
-  adapter: huggingface
   paths: [/path/to/unified_datasets/<dataset_name>]
 ```
 
@@ -141,9 +141,9 @@ sampling:
 ```text
 MP4 + build_standard_dataset
     -> save_to_disk
-    -> HuggingfaceDatasetAdapter
+    -> ProgressSampler.pool
     -> Trajectory
-    -> RewardAlignmentSampler
+    -> ProgressSampler.sample()
 ```
 
 运行：

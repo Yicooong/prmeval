@@ -4,11 +4,10 @@ PRMEval 使用一个 YAML 文件描述采样、推理、指标和产物目录。
 
 ```yaml
 sampling:
-  dataset_name: jsonl-full-smoke
-  adapter: jsonl
-  paths: [examples/stage_1_smoke/trajectories.jsonl]
+  dataset_name: rbm-1m-ood
+  paths: [/path/to/hf_datasets/rbm-1m-ood]
   max_trajectories: 1
-  eval_types: [reward_alignment]
+  eval_types: [progress]
   base_frames: 3
   progress_type: absolute_first_frame
 
@@ -23,10 +22,10 @@ infer:
   max_tokens: 4096
   options: {}
 
-metrics: [reward_alignment]
+metrics: [progress]
 mode: separate
 output_dir: evaluation_output
-run_name: jsonl-progress-full-smoke
+run_name: progress-full-smoke
 resume: false
 ```
 
@@ -34,7 +33,7 @@ resume: false
 
 | 配置项 | 使用阶段 | 说明 |
 |---|---|---|
-| `sampling` | Stage 1 | 数据源、adapter、采样类型、轨迹与帧数限制 |
+| `sampling` | Stage 1 | Hugging Face Dataset 路径、采样类型、轨迹与帧数限制 |
 | `infer` | Stage 2 | baseline 名称、模型/连接信息和扩展参数 |
 | `metrics` | Stage 3 | 需要计算的指标名称列表 |
 | `mode` | `run` 编排 | `separate` 使用磁盘阶段产物；`continue` 在内存中连接采样与推理 |
@@ -49,15 +48,14 @@ resume: false
 | 字段 | 说明 |
 |---|---|
 | `dataset_name` | 写入评测记录的数据集名称，也参与 sample ID 构造 |
-| `adapter` | 数据接入方式，当前支持 `jsonl` 和 `huggingface` |
-| `paths` | 一个或多个本地数据路径 |
+| `paths` | 一个或多个由 `datasets.save_to_disk()` 保存的本地 Dataset 目录 |
 | `max_trajectories` | 最多读取的轨迹数 |
 | `eval_types` | 需要构造的评测类型 |
-| `base_frames` | 基准采样帧数；`reward_alignment` 等普通采样直接按此数量抽帧 |
+| `base_frames` | 基准采样帧数；`progress` 等普通采样直接按此数量抽帧 |
 | `progress_type` | progress 真值的定义方式 |
-| `temporal_robustness` | `synthetic_temporal_robustness` 的最终帧数上限、变换类型、数量与参数范围 |
+| `temporal_robustness` | `progress_temporal_variation` 的最终帧数上限、变换类型、数量与参数范围 |
 
-相对路径以运行命令时的当前目录为基准。adapter 的目录结构与字段要求见 [本地数据格式与 Dataset Adapter](DATASETS.md)。
+相对路径以运行命令时的当前目录为基准。目录结构与字段要求见 [本地 Hugging Face Dataset](DATASETS.md)。
 
 ### Synthetic temporal robustness
 
@@ -66,7 +64,7 @@ resume: false
 
 ```yaml
 sampling:
-  eval_types: [synthetic_temporal_robustness]
+  eval_types: [progress_temporal_variation]
   base_frames: 9                # 变换前的基准采样数量
   progress_type: absolute_first_frame
   temporal_robustness:
@@ -149,13 +147,12 @@ infer:
 `metrics` 接收已注册指标名称列表，例如：
 
 ```yaml
-metrics: [reward_alignment]
+metrics: [progress]
 ```
 
 查看注册项：
 
 ```bash
-python -m prmeval.cli list-datasets
 python -m prmeval.cli list-samplers
 python -m prmeval.cli list-infers
 python -m prmeval.cli list-metrics
@@ -163,9 +160,12 @@ python -m prmeval.cli list-metrics
 
 ## 输出目录与续跑
 
-产物写入 `<output_dir>/<run_name>/`。`resume: true` 时，Stage 1 根据 sampling 指纹复用样本；Stage 2 跳过已成功的 `sample_id`，失败样本会在下次运行时逐个重试。配置指纹不兼容时框架拒绝混写。详见 [三阶段评测流程](PIPELINE.md#运行产物与断点续跑)。
+产物写入 `<output_dir>/<run_name>/`；未设置 `run_name` 时使用 `default`。`resume: true` 时，Stage 1
+验证并复用已有样本，Stage 2 跳过 `predictions.jsonl` 中已成功的 `sample_id`，失败样本会在下次运行时重试。
+框架不比较配置指纹，因此数据、采样或模型配置改变时必须使用新的 `run_name`。详见
+[三阶段评测流程](PIPELINE.md#运行产物与断点续跑)。
 
-`mode: continue` 只影响 `run` 命令。它不生成 `samples.jsonl`、`sample_manifest.json` 或 `sample_frames/*.npz`；
+`mode: continue` 只影响 `run` 命令。它不生成 `samples.jsonl` 或 `sample_frames/*.npz`；
 sample 迭代器没有独立 batch 配置，而是由 `infer.batch_size` 分批消费。独立运行 `sample`、`infer`、`metrics`
 时始终使用可移植的磁盘阶段协议。连续模式仍写 predictions、errors 和最终指标，以便审计及按 sample ID 续跑。
 

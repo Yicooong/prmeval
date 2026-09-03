@@ -53,10 +53,9 @@ def load_model(
 
     # Load only Qwen 3 8B.
     assert "q3vl8b", "We're only supporting Qwen 3 8B for these experiments."
-    model_id = base_model_path
 
     # Load model and processor.
-    processing_class = AutoProcessor.from_pretrained(model_id)
+    processing_class = AutoProcessor.from_pretrained(base_model_path)
     processing_class.tokenizer.padding_side = "left"
     pad_token_id = processing_class.tokenizer.pad_token_id
     processing_class.pad_token_id = pad_token_id

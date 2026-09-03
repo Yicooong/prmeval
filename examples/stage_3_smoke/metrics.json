@@ -54,7 +54,7 @@
       "tie_rate": 0.0,
       "num_comparisons": 3
     },
-    "reward_alignment": {
+    "progress": {
       "mse": 0.00833333333333333,
       "loss": 0.00833333333333333,
       "pearson": 1.0,

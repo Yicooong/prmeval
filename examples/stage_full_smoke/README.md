@@ -1,11 +1,11 @@
-# JSONL 全流程冒烟测试
+# Hugging Face Dataset 全流程冒烟测试
 
 这个测试固定验证以下组合：
 
-- dataset adapter：`jsonl`
-- sampler/evaluation type：`reward_alignment`
+- dataset source：本地 Hugging Face Dataset
+- sampler/evaluation type：`progress`
 - infer：`progress_test`
-- metric：`reward_alignment`
+- metric：`progress`
 
 配置文件为 `configs/eval/progress_test_remote.yaml`。测试只读取一条 trajectory，并只发起一次远程模型请求。
 

@@ -1,3 +1,5 @@
+"""Shared helpers for cross-stage records and their on-disk artifacts."""
+
 from __future__ import annotations
 
 import hashlib
@@ -8,7 +10,7 @@ from pathlib import Path
 
 import numpy as np
 
-from ..sample.adapters import load_frames
+from ..sample import load_frames
 from .schemas import (
     EvaluationRecord,
     EvaluationSample,
@@ -35,7 +37,7 @@ def _file_sha256(path: Path) -> str:
 
 def _target_for_progress(sample: ProgressSample) -> ValuePayload:
     trajectory = sample.trajectory
-    if sample.eval_type == "reward_alignment":
+    if sample.eval_type == "progress":
         return ValuePayload(kind="progress", values=trajectory.target_progress)
     if sample.eval_type == "policy_ranking":
         rank = trajectory.partial_success
@@ -47,16 +49,11 @@ def _target_for_progress(sample: ProgressSample) -> ValuePayload:
             kind="rank",
             value=float(rank) if rank is not None else None,
             label=trajectory.quality_label,
-            data={"frame_target_progress": trajectory.target_progress},
         )
     if sample.eval_type == "confusion_matrix":
         return ValuePayload(
             kind="task_match",
             value=float(trajectory.metadata.get("lang_task") == trajectory.metadata.get("video_task")),
-            data={
-                "lang_task": trajectory.metadata.get("lang_task"),
-                "video_task": trajectory.metadata.get("video_task"),
-            },
         )
     return ValuePayload(kind="progress", values=trajectory.target_progress)
 
@@ -65,23 +62,18 @@ def sample_to_record(sample: EvaluationSample, dataset_name: str) -> EvaluationR
     """Normalize internal sampler output into the one cross-stage Record schema."""
     if isinstance(sample, ProgressSample):
         trajectory = sample.trajectory
-        items = [RecordInputItem(
-            role="trajectory",
-            frames=trajectory.frames,
-            frame_indices=trajectory.frame_indices or [],
-            num_frames_total=trajectory.num_frames_total,
-            source_id=trajectory.id,
-            data=trajectory.metadata,
-        )]
+        items = [
+            RecordInputItem(
+                role="trajectory",
+                frames=trajectory.frames,
+                frame_indices=trajectory.frame_indices or [],
+                source_id=trajectory.id,
+                data=trajectory.metadata,
+            )
+        ]
         target = _target_for_progress(sample)
-        source_id = trajectory.id
         source_name = trajectory.data_source
         task = trajectory.task
-        extensions = {
-            "quality_label": trajectory.quality_label,
-            "partial_success": trajectory.partial_success,
-            "preference_rank": trajectory.preference_rank,
-        }
     else:
         chosen = sample.chosen_trajectory
         rejected = sample.rejected_trajectory
@@ -90,7 +82,6 @@ def sample_to_record(sample: EvaluationSample, dataset_name: str) -> EvaluationR
                 role="chosen",
                 frames=chosen.frames,
                 frame_indices=chosen.frame_indices or [],
-                num_frames_total=chosen.num_frames_total,
                 source_id=chosen.id,
                 data=chosen.metadata,
             ),
@@ -98,37 +89,29 @@ def sample_to_record(sample: EvaluationSample, dataset_name: str) -> EvaluationR
                 role="rejected",
                 frames=rejected.frames,
                 frame_indices=rejected.frame_indices or [],
-                num_frames_total=rejected.num_frames_total,
                 source_id=rejected.id,
                 data=rejected.metadata,
             ),
         ]
         target = ValuePayload(kind="preference", label="chosen")
-        source_id = chosen.id
         source_name = chosen.data_source
         task = chosen.task
-        extensions = {"chosen_source_id": chosen.id, "rejected_source_id": rejected.id}
     return EvaluationRecord(
-        stage="sampled",
         sample_id=sample.sample_id,
         evaluation={
             "type": sample.eval_type,
             "dataset": {"name": dataset_name, "source": source_name},
         },
-        input={"task": task, "task_id": task, "items": items},
+        input={"task": task, "items": items},
         target=target,
-        source={"id": source_id},
-        extensions=extensions,
     )
 
 
 def strip_record_frames(record: EvaluationRecord) -> EvaluationRecord:
     """Return a JSON-safe record without runtime frame arrays or disk frame references."""
-    # 如果frames是字符串，保留原样，否则去除
+    # Keep string frame references and remove in-memory frame arrays.
     items = [
-        item if isinstance(item.frames, str)
-        else item.model_copy(update={"frames": []})
-        for item in record.input.items
+        item if isinstance(item.frames, str) else item.model_copy(update={"frames": []}) for item in record.input.items
     ]
     return record.model_copy(update={"input": record.input.model_copy(update={"items": items})})
 
@@ -154,9 +137,7 @@ def _materialize_record(record: EvaluationRecord, bundle_dir: Path) -> Evaluatio
     return record.model_copy(update={"input": record.input.model_copy(update={"items": items})})
 
 
-def write_sample_artifacts(
-    samples: Iterable[EvaluationSample], path: Path, dataset_name: str = "unknown"
-) -> dict:
+def write_sample_artifacts(samples: Iterable[EvaluationSample], path: Path, dataset_name: str = "unknown") -> dict:
     """Write Stage-1 records using the same schema later enriched by inference."""
     path.parent.mkdir(parents=True, exist_ok=True)
     seen: set[str] = set()
@@ -194,13 +175,9 @@ def _hydrate_item(item: RecordInputItem, bundle_dir: Path, verify: bool) -> Reco
             raise ValueError(f"Frame key '{reference.key}' is missing in {resolved}")
         frames = np.asarray(archive[reference.key])
     if len(frames) != reference.num_frames:
-        raise ValueError(
-            f"Frame count mismatch in {resolved}: expected {reference.num_frames}, got {len(frames)}"
-        )
+        raise ValueError(f"Frame count mismatch in {resolved}: expected {reference.num_frames}, got {len(frames)}")
     if item.frame_indices and len(item.frame_indices) != len(frames):
-        raise ValueError(
-            f"frame_indices/frame mismatch in {resolved}: {len(item.frame_indices)} != {len(frames)}"
-        )
+        raise ValueError(f"frame_indices/frame mismatch in {resolved}: {len(item.frame_indices)} != {len(frames)}")
     return item.model_copy(update={"frames": frames})
 
 
@@ -215,8 +192,8 @@ def load_sample_artifacts(path: Path, verify: bool = True) -> list[EvaluationRec
                 continue
             try:
                 record = EvaluationRecord.model_validate_json(line)
-                if record.stage != "sampled":
-                    raise ValueError(f"expected stage 'sampled', got '{record.stage}'")
+                if record.execution is not None:
+                    raise ValueError("expected a sampled record without execution results")
                 if record.sample_id in seen:
                     raise ValueError(f"duplicate sample_id '{record.sample_id}'")
                 seen.add(record.sample_id)
@@ -234,8 +211,9 @@ def load_sample_artifacts(path: Path, verify: bool = True) -> list[EvaluationRec
 
 
 def _runtime_item(item: RecordInputItem, bundle_dir: Path) -> RecordInputItem:
-    reference = FrameReference.model_validate(item.frames)
-    return item.model_copy(update={"frames": load_frames(str(bundle_dir / reference.path))})
+    if isinstance(item.frames, np.ndarray):
+        return item
+    return _hydrate_item(item, bundle_dir, verify=False)
 
 
 def record_to_sample(record: EvaluationRecord, bundle_dir: Path) -> EvaluationSample:
@@ -255,7 +233,6 @@ def record_to_sample(record: EvaluationRecord, bundle_dir: Path) -> EvaluationSa
                 id=chosen.source_id or f"{record.sample_id}:chosen",
                 frames=chosen.frames,
                 frame_indices=chosen.frame_indices,
-                num_frames_total=chosen.num_frames_total,
                 metadata=chosen.data,
                 **common,
             ),
@@ -263,18 +240,12 @@ def record_to_sample(record: EvaluationRecord, bundle_dir: Path) -> EvaluationSa
                 id=rejected.source_id or f"{record.sample_id}:rejected",
                 frames=rejected.frames,
                 frame_indices=rejected.frame_indices,
-                num_frames_total=rejected.num_frames_total,
                 metadata=rejected.data,
                 **common,
             ),
         )
     item = _runtime_item(record.input.items[0], bundle_dir)
-    frame_target = None
-    if record.target:
-        frame_target = (
-            record.target.values if record.target.kind == "progress"
-            else record.target.data.get("frame_target_progress")
-        )
+    frame_target = record.target.values if record.target and record.target.kind == "progress" else None
     return ProgressSample(
         sample_id=record.sample_id,
         eval_type=record.evaluation.type,
@@ -282,12 +253,10 @@ def record_to_sample(record: EvaluationRecord, bundle_dir: Path) -> EvaluationSa
             id=item.source_id or record.sample_id,
             frames=item.frames,
             frame_indices=item.frame_indices,
-            num_frames_total=item.num_frames_total,
             target_progress=frame_target,
             metadata=item.data,
-            quality_label=record.extensions.get("quality_label"),
-            partial_success=record.extensions.get("partial_success"),
-            preference_rank=record.extensions.get("preference_rank"),
+            quality_label=record.target.label if record.target else None,
+            partial_success=(record.target.value if record.target and record.target.kind == "rank" else None),
             **common,
         ),
     )
@@ -297,8 +266,7 @@ def validate_sample_artifacts(path: Path) -> dict:
     records = load_sample_artifacts(path, verify=True)
     counts = Counter(record.evaluation.type for record in records)
     frame_count = sum(
-        sum(FrameReference.model_validate(item.frames).num_frames for item in record.input.items)
-        for record in records
+        sum(FrameReference.model_validate(item.frames).num_frames for item in record.input.items) for record in records
     )
     return {
         "valid": True,

@@ -33,12 +33,10 @@ class Registry(Generic[T]):
         return sorted(self._items)
 
 
-DATASETS: Registry[Any] = Registry("dataset")
 SAMPLERS: Registry[Any] = Registry("sampler")
 INFERS: Registry[Any] = Registry("infer")
 METRICS: Registry[Any] = Registry("metric")
 
-register_dataset = DATASETS.register
 register_sampler = SAMPLERS.register
 register_infer = INFERS.register
 register_metric = METRICS.register

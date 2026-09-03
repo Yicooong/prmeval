@@ -1,221 +1,123 @@
 # EvaluationRecord 数据结构说明
 
-## 1. 设计目标
+`EvaluationRecord` 是三个阶段共用的统一记录。Stage 1 写入输入与 target，Stage 2 在其副本上补充 infer、
+prediction 和 execution，Stage 3 读取 target 与 prediction 计算指标。
 
-`EvaluationRecord` 是 Stage 1 与 Stage 2 共用的统一数据结构，也是 Stage 3 的输入。新增 dataset 或 infer 时不修改顶层结构；新增 metric 时，由 Metric 校验它需要的 `target.kind` 和 `prediction.kind`。
-
-顶层结构如下：
+## 顶层结构
 
 ```json
 {
   "schema_version": "bench.record.v1",
-  "stage": "sampled | inferred",
-  "sample_id": "...",
-  "evaluation": {},
-  "input": {},
-  "target": {},
+  "sample_id": "stable-sample-id",
+  "evaluation": {
+    "type": "progress",
+    "dataset": {"name": "dataset", "source": "optional-source"}
+  },
+  "input": {
+    "task": "open the drawer",
+    "items": []
+  },
+  "target": null,
   "infer": null,
   "prediction": null,
-  "execution": null,
-  "source": {},
-  "extensions": {}
+  "execution": null
 }
 ```
 
-## 2. 字段分类
+不再保存显式 `stage`：`execution == null` 表示 sampled Record，`execution` 存在表示 Infer 已执行。
+文件位置进一步明确状态：`samples.jsonl` 是 sampled，`predictions.jsonl` 是成功结果，`errors.jsonl` 是失败结果。
 
-| 分类 | 字段 | 作用 |
-|---|---|---|
-| 协议字段 | `schema_version`, `stage` | 格式兼容与单条记录生命周期 |
-| 主键字段 | `sample_id` | 跨阶段对齐、去重和结果定位 |
-| 评测路由 | `evaluation` | 指定 eval type 和数据集切片 |
-| 模型输入 | `input` | 保存任务、帧引用和抽样信息 |
-| 指标真值 | `target` | 保存 progress、rank、preference 等真值 |
-| 模型身份 | `infer` | 保存 infer、本地 checkpoint 或远程模型身份和版本 |
-| 模型输出 | `prediction` | 保存 adapter 归一化后的预测 |
-| 执行审计 | `execution` | 保存成功/失败、重试次数和耗时 |
-| 来源审计 | `source` | 保存可选的原始数据 ID |
-| 扩展字段 | `extensions` | 保存不影响核心协议的附加信息 |
+## 核心字段
 
-## 3. 顶层字段
-
-### `schema_version`
-
-必填，固定为 `bench.record.v1`。它不是指标，只用于识别数据协议版本。未来字段发生不兼容变化时应发布 v2，而不是让旧文件静默失效。
-
-### `stage`
-
-必填，可选值：
-
-```text
-sampled   Stage 1 已完成，等待模型推理
-inferred  Stage 2 已执行，结果可能成功或失败
-```
-
-不增加 `metric_completed`。Metric 是多记录聚合过程，完成状态由 Metric 输出和 RunManifest 表示。
-
-### `sample_id`
-
-必填，是唯一跨阶段主键。Stage 2 必须原样保留 Stage 1 的值。
-
-同一个 sample 分别由多个 infer 推理时，可以在不同 run 中保持相同 `sample_id`。合并结果后的联合身份为：
-
-```text
-(evaluation.dataset.name, infer.name, sample_id)
-```
-
-## 4. `evaluation`
-
-```json
-{
-  "type": "reward_alignment",
-  "dataset": {
-    "name": "rbm-1m-ood",
-    "split": "test",
-    "source": "optional-subset"
-  }
-}
-```
-
-| 字段 | 必填 | 说明 |
+| 字段 | 必需 | 含义 |
 |---|---:|---|
-| `type` | 是 | 评测任务，如 `reward_alignment`、`policy_ranking` |
-| `dataset.name` | 是 | 统一数据集名称，也是 Metric 切片维度 |
-| `dataset.split` | 否 | test、validation 等划分 |
-| `dataset.source` | 否 | 聚合数据集中的子来源 |
+| `schema_version` | 是 | 当前固定为 `bench.record.v1` |
+| `sample_id` | 是 | 一次具体 Infer 请求的稳定主键 |
+| `evaluation.type` | 是 | 选择 Metric，例如 `progress` 或 `policy_ranking` |
+| `evaluation.dataset.name` | 是 | 数据集身份及 Metric 切片维度 |
+| `evaluation.dataset.source` | 否 | 数据集内的来源或子集 |
+| `input.task` | 是 | 提供给模型的任务文本，也是任务分组键 |
+| `input.items` | 是 | 一个或多个 trajectory/chosen/rejected 输入 |
+| `target` | 否 | Stage 1 写入的指标真值，不发送给模型 |
+| `infer` | 否 | Stage 2 写入的 Infer 和模型身份 |
+| `prediction` | 否 | Stage 2 写入的标准预测 |
+| `execution` | 否 | Stage 2 写入的成功或失败状态 |
 
-新增 dataset 只需要 DatasetAdapter 输出新的 `dataset.name/source`，不修改 Record Schema。
+`sample_id` 不等于 `input.items[].source_id`。一条原始 trajectory 可以派生多个不同采样请求，这些请求共享
+source ID，但拥有不同 sample ID。
 
-## 5. `input`
-
-```json
-{
-  "task": "open the drawer",
-  "task_id": "open the drawer",
-  "items": [{
-    "role": "trajectory",
-    "frames": {
-      "type": "npz",
-      "path": "sample_frames/sample-id-trajectory.npz",
-      "key": "frames",
-      "num_frames": 3,
-      "sha256": "..."
-    },
-    "frame_indices": [0, 15, 31],
-    "num_frames_total": 32,
-    "source_id": "optional-original-id",
-    "data": {}
-  }]
-}
-```
-
-`task` 和 `items` 必填。Reward alignment 通常只有一个 `role: trajectory`；偏好评测可以包含 `chosen` 和 `rejected` 两项。
-
-`source_id` 是原始数据审计信息，不是主键。Stage 3 不需要读取 `.npz` 文件，但完整 Record 会保留帧引用，便于追踪输入。
-
-## 6. `target` 与 `prediction`
-
-两者共用 `ValuePayload`：
+## input item
 
 ```json
 {
-  "kind": "progress",
-  "values": [0.0, 0.5, 1.0],
-  "value": null,
-  "label": null,
-  "probability": null,
+  "role": "trajectory",
+  "frames": {
+    "type": "npz",
+    "path": "sample_frames/id-trajectory.npz",
+    "key": "frames",
+    "num_frames": 8,
+    "sha256": "..."
+  },
+  "frame_indices": [0, 4, 8, 12, 16, 20, 24, 29],
+  "source_id": "trajectory-001",
   "data": {}
 }
 ```
 
-| kind | target 典型字段 | prediction 典型字段 | 使用指标 |
-|---|---|---|---|
-| `progress` | `values` | `values` | MSE、Pearson、ranking reducer |
-| `rank` | `value`, `label` | — | Kendall 真值 |
-| `preference` | `label=chosen` | `label`, `probability` | Preference accuracy |
-| `task_match` | `value`, `data` | — | Confusion matrix 真值 |
+`role` 区分 trajectory、chosen 和 rejected。`frame_indices` 保留抽帧和时序变换来源；`source_id` 用于定位
+原始轨迹；Metric 专用元数据放在 `data`，例如 synthetic temporal 参数或 confusion 的语言/视频任务。
 
-Metric 插件负责更严格的语义校验。例如 reward alignment 要求：
+## target 与 prediction
 
-```text
-target.kind == progress
-prediction.kind == progress
-target.values 非空
-len(target.values) == len(prediction.values)
-所有 progress 位于 [0, 1]
+二者使用相同的紧凑 payload，根据 `kind` 解释字段：
+
+```json
+{"kind": "progress", "values": [0.0, 0.5, 1.0]}
+{"kind": "rank", "value": 1.0, "label": "successful"}
+{"kind": "preference", "label": "chosen", "probability": 0.8}
+{"kind": "task_match", "value": 1.0}
 ```
 
-## 7. `infer` 与 `execution`
+`evaluation.type` 与 `kind` 不能合并：多个评测可以使用相同的 progress payload，但计算不同指标。
 
-成功推理记录示例：
+## infer
 
 ```json
 {
-  "infer": {
-    "name": "rbm",
-    "model": "robometer-4b",
-    "version": "v1"
-  },
-  "execution": {
-    "status": "success",
-    "attempts": 1,
-    "latency_seconds": 0.83,
-    "error": null,
-    "raw_response": null
-  }
+  "name": "progress_test",
+  "model": "remote-model-or-checkpoint",
+  "version": null
 }
 ```
 
-失败记录会在 `execution.raw_response` 中保留远程服务返回的原始响应，便于定位请求成功但结构化解析或
-schema 校验失败的问题；没有收到响应（例如连接失败）时该字段为 `null`。
+`name` 是注册的实现，`model` 是实际 checkpoint 或服务模型，含义不同。
 
-新增 infer 只需要 adapter 填写上述字段并产生统一 `prediction`，不修改 Record 顶层结构。
+## execution
 
-## 8. 阶段必填规则
+成功：
 
-| 字段 | sampled | inferred success | inferred error |
-|---|---:|---:|---:|
-| `schema_version` | 必填 | 必填 | 必填 |
-| `stage` | `sampled` | `inferred` | `inferred` |
-| `sample_id` | 必填 | 必填且不变 | 必填且不变 |
-| `evaluation` | 必填 | 原样保留 | 原样保留 |
-| `input` | 必填 | 原样保留 | 原样保留 |
-| `target` | 按 eval type 要求 | 原样保留 | 原样保留 |
-| `infer` | 必须为空 | 必填 | 建议保留 |
-| `prediction` | 必须为空 | 必填 | 通常为空 |
-| `execution` | 必须为空 | 必填、status=success | 必填、status=error |
-| `execution.error` | — | 为空 | 必填 |
+```json
+{"status": "success", "error": null, "raw_response": null}
+```
 
-## 9. 完整 reward alignment 推理记录
+失败：
 
 ```json
 {
-  "schema_version": "bench.record.v1",
-  "stage": "inferred",
-  "sample_id": "align-001",
-  "evaluation": {
-    "type": "reward_alignment",
-    "dataset": {"name": "rbm-1m-ood", "split": "test"}
-  },
-  "input": {
-    "task": "open the drawer",
-    "task_id": "open the drawer",
-    "items": [{
-      "role": "trajectory",
-      "frames": {"type": "npz", "path": "sample_frames/align-001-trajectory.npz", "key": "frames", "num_frames": 3, "sha256": "..."},
-      "frame_indices": [0, 15, 31],
-      "num_frames_total": 32,
-      "source_id": "raw-trajectory-123",
-      "data": {}
-    }]
-  },
-  "target": {"kind": "progress", "values": [0.0, 0.5, 1.0]},
-  "infer": {"name": "rbm", "model": "robometer-4b", "version": "v1"},
-  "prediction": {"kind": "progress", "values": [0.0, 0.4, 0.8]},
-  "execution": {"status": "success", "attempts": 1, "latency_seconds": 0.83, "error": null},
-  "source": {"id": "raw-trajectory-123", "data": {}},
-  "extensions": {}
+  "status": "error",
+  "error": "TimeoutError: request timed out",
+  "raw_response": null
 }
 ```
 
-可运行示例位于 `examples/reward_alignment_v1/`。
+错误响应只保存在 `execution.raw_response`。成功 prediction 不重复保存 raw response。
+
+## 状态约束
+
+- `execution == null` 时，`infer` 和 `prediction` 必须同时为空。
+- execution 存在时必须有 `infer`。
+- `execution.status == success` 时必须有 `prediction`。
+- `execution.status == error` 时必须有错误消息，且不能有 `prediction`。
+
+协议不再包含 `source`、`extensions`、`task_id`、`dataset.split`、`num_frames_total`、`attempts` 或
+`latency_seconds`。旧扁平 EvaluationRecord 不再自动迁移。

@@ -1,9 +1,8 @@
 sampling:
   dataset_name: rbm_1m_ood
-  adapter: huggingface 
   paths: [/mnt/shared-storage-gpfs2/xxxxx/hf_rbm_1m_ood_datasets/rbm-1m-ood]
   # max_trajectories: 20
-  eval_types: [reward_alignment]
+  eval_types: [progress]
   base_frames: 8
   progress_type: absolute_first_frame
 
@@ -15,7 +14,7 @@ infer:
   options:
     max_new_tokens: 128
 
-metrics: [reward_alignment]
+metrics: [progress]
 output_dir: /mnt/shared-storage-user/xxx/evaluation_output
 run_name: rbm_1m_ood_robometer_reward_alignment
 resume: false

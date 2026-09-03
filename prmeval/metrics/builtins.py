@@ -43,15 +43,15 @@ def _slice_key(record: EvaluationRecord) -> str:
     return f"{record.evaluation.dataset.name}:{infer}"
 
 
-@register_metric("reward_alignment")
-class RewardAlignmentMetric(Metric):
+@register_metric("progress")
+class ProgressMetric(Metric):
     """Per-sample progress MSE/Pearson, then equal-weighted sample aggregation."""
 
     def compute(self, records: list[EvaluationRecord]) -> dict[str, Any]:
         valid = [
             record
             for record in records
-            if record.evaluation.type == "reward_alignment"
+            if record.evaluation.type in {"progress", "reward_alignment"}
             and _successful(record)
             and record.target is not None
             and record.target.kind == "progress"
@@ -65,11 +65,11 @@ class RewardAlignmentMetric(Metric):
             prediction = np.asarray(record.prediction.values or [], dtype=float)
             if len(target) == 0 or len(target) != len(prediction):
                 raise ValueError(
-                    f"reward_alignment sample '{record.sample_id}' requires non-empty, equal-length "
+                    f"progress sample '{record.sample_id}' requires non-empty, equal-length "
                     "target.values and prediction.values"
                 )
             if np.any((target < 0) | (target > 1)) or np.any((prediction < 0) | (prediction > 1)):
-                raise ValueError(f"reward_alignment sample '{record.sample_id}' contains progress outside [0, 1]")
+                raise ValueError(f"progress sample '{record.sample_id}' contains progress outside [0, 1]")
             mse = float(np.mean((prediction - target) ** 2))
             correlation = _pearson(target, prediction)
             details[record.sample_id] = {
@@ -157,8 +157,8 @@ def _aggregate_temporal(stats: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-@register_metric("synthetic_temporal_robustness")
-class SyntheticTemporalRobustnessMetric(Metric):
+@register_metric("progress_temporal_variation")
+class ProgressTemporalVariationMetric(Metric):
     """State-alignment and temporal-shortcut metrics over synthetic frame mappings."""
 
     prediction_trend_tolerance = 0.05
@@ -167,7 +167,7 @@ class SyntheticTemporalRobustnessMetric(Metric):
         valid = [
             record
             for record in records
-            if record.evaluation.type == "synthetic_temporal_robustness"
+            if record.evaluation.type in {"progress_temporal_variation", "synthetic_temporal_robustness"}
             and _successful(record)
             and record.target is not None
             and record.target.kind == "progress"
@@ -181,16 +181,14 @@ class SyntheticTemporalRobustnessMetric(Metric):
             prediction = np.asarray(record.prediction.values or [], dtype=float)
             if len(target) == 0 or len(target) != len(prediction):
                 raise ValueError(
-                    f"synthetic_temporal_robustness sample '{record.sample_id}' requires non-empty, equal-length "
+                    f"progress_temporal_variation sample '{record.sample_id}' requires non-empty, equal-length "
                     "target.values and prediction.values"
                 )
             if not np.all(np.isfinite(target)) or not np.all(np.isfinite(prediction)):
-                raise ValueError(
-                    f"synthetic_temporal_robustness sample '{record.sample_id}' contains non-finite values"
-                )
+                raise ValueError(f"progress_temporal_variation sample '{record.sample_id}' contains non-finite values")
             if np.any((target < 0) | (target > 1)) or np.any((prediction < 0) | (prediction > 1)):
                 raise ValueError(
-                    f"synthetic_temporal_robustness sample '{record.sample_id}' contains progress outside [0, 1]"
+                    f"progress_temporal_variation sample '{record.sample_id}' contains progress outside [0, 1]"
                 )
             metadata = record.input.items[0].data.get("synthetic_temporal", {})
             transform = str(metadata.get("transform") or "unknown")
@@ -273,27 +271,38 @@ class SyntheticTemporalRobustnessMetric(Metric):
 @register_metric("quality_preference")
 class QualityPreferenceMetric(Metric):
     def compute(self, records: list[EvaluationRecord]) -> dict[str, Any]:
-        predictions = [
-            record.prediction
+        valid = [
+            record
             for record in records
             if record.evaluation.type == "quality_preference"
             and _successful(record)
             and record.prediction is not None
             and record.prediction.kind == "preference"
         ]
+        predictions = [record.prediction for record in valid]
         correct = sum(prediction.label == "chosen" for prediction in predictions)
         ties = sum(prediction.label == "tie" for prediction in predictions)
         return {
             "accuracy": correct / len(predictions) if predictions else None,
             "tie_rate": ties / len(predictions) if predictions else None,
             "num_comparisons": len(predictions),
+            "details": {
+                record.sample_id: {
+                    "correct": record.prediction.label == "chosen",
+                    "tie": record.prediction.label == "tie",
+                    "preference": record.prediction.label,
+                    "chosen_probability": record.prediction.probability,
+                }
+                for record in valid
+            },
         }
 
 
 @register_metric("policy_ranking")
 class PolicyRankingMetric(Metric):
     def compute(self, records: list[EvaluationRecord]) -> dict[str, Any]:
-        by_task: dict[str, list[tuple[float, float, float, float]]] = defaultdict(list)
+        by_task: dict[str, list[tuple[str, float, float, float, float]]] = defaultdict(list)
+        details: dict[str, Any] = {}
         for record in records:
             if not (
                 record.evaluation.type == "policy_ranking"
@@ -307,13 +316,25 @@ class PolicyRankingMetric(Metric):
             ):
                 continue
             curve = [float(value) for value in record.prediction.values]
-            key = f"{_slice_key(record)}:{record.input.task_id or record.input.task}"
-            by_task[key].append((float(record.target.value), curve[-1], float(np.mean(curve)), float(np.sum(curve))))
+            key = f"{_slice_key(record)}:{record.input.task}"
+            target_rank = float(record.target.value)
+            last = curve[-1]
+            average = float(np.mean(curve))
+            total = float(np.sum(curve))
+            by_task[key].append((record.sample_id, target_rank, last, average, total))
+            details[record.sample_id] = {
+                "group_id": key,
+                "target_rank": target_rank,
+                "last": last,
+                "average": average,
+                "sum": total,
+            }
         task_scores = {
             task: {
-                "last": _kendall([x[0] for x in pairs], [x[1] for x in pairs]),
-                "average": _kendall([x[0] for x in pairs], [x[2] for x in pairs]),
-                "sum": _kendall([x[0] for x in pairs], [x[3] for x in pairs]),
+                "sample_ids": [x[0] for x in pairs],
+                "last": _kendall([x[1] for x in pairs], [x[2] for x in pairs]),
+                "average": _kendall([x[1] for x in pairs], [x[3] for x in pairs]),
+                "sum": _kendall([x[1] for x in pairs], [x[4] for x in pairs]),
             }
             for task, pairs in by_task.items()
             if len(pairs) > 1
@@ -329,6 +350,7 @@ class PolicyRankingMetric(Metric):
             "kendall_sum": means["sum"],
             "num_tasks": len(task_scores),
             "task_details": task_scores,
+            "details": details,
         }
 
 
@@ -345,19 +367,19 @@ class ConfusionMatrixMetric(Metric):
             and record.prediction is not None
             and record.prediction.kind == "progress"
             and record.prediction.values
-            and record.target.data.get("lang_task") is not None
-            and record.target.data.get("video_task") is not None
+            and record.input.items[0].data.get("lang_task") is not None
+            and record.input.items[0].data.get("video_task") is not None
         ]
         tasks = sorted(
-            {str(record.target.data["lang_task"]) for record in valid}
-            | {str(record.target.data["video_task"]) for record in valid}
+            {str(record.input.items[0].data["lang_task"]) for record in valid}
+            | {str(record.input.items[0].data["video_task"]) for record in valid}
         )
         index = {task: i for i, task in enumerate(tasks)}
         matrix = np.zeros((len(tasks), len(tasks)), dtype=float)
         counts = np.zeros_like(matrix, dtype=int)
         for record in valid:
-            row = index[str(record.target.data["lang_task"])]
-            column = index[str(record.target.data["video_task"])]
+            row = index[str(record.input.items[0].data["lang_task"])]
+            column = index[str(record.input.items[0].data["video_task"])]
             matrix[row, column] += float(record.prediction.values[-1])
             counts[row, column] += 1
         matrix = np.divide(matrix, counts, out=np.zeros_like(matrix), where=counts != 0)
@@ -377,6 +399,15 @@ class ConfusionMatrixMetric(Metric):
             "avg_off_diagonal": average_off_diagonal,
             "normalized_trace_minus_offdiag": average_diagonal - average_off_diagonal,
             "num_samples": len(valid),
+            "details": {
+                record.sample_id: {
+                    "lang_task": record.input.items[0].data["lang_task"],
+                    "video_task": record.input.items[0].data["video_task"],
+                    "target_match": bool(record.target.value),
+                    "predicted_progress": float(record.prediction.values[-1]),
+                }
+                for record in valid
+            },
         }
 
 

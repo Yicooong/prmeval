@@ -60,11 +60,10 @@ class TemporalRobustnessConfig(BaseModel):
 class SamplingConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    dataset_name: str = "rbm-1m-ood"
-    adapter: str = "huggingface"
+    dataset_name: str = Field(default="eval_dataset")
     paths: list[str] = Field(default_factory=list)
     max_trajectories: int | None = Field(default=None, ge=1)
-    eval_types: list[str] = Field(default_factory=lambda: ["reward_alignment"])
+    eval_types: list[str] = Field(default_factory=lambda: ["progress"])
     base_frames: int = Field(default=8, ge=1)
     progress_type: Literal["absolute_first_frame", "absolute_wrt_total_frames", "relative_first_frame"] = (
         "absolute_first_frame"
@@ -80,15 +79,15 @@ class SamplingConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_temporal_robustness(self) -> SamplingConfig:
-        if "synthetic_temporal_robustness" not in self.eval_types:
+        if "progress_temporal_variation" not in self.eval_types:
             return self
         temporal = self.temporal_robustness
         if temporal.max_frames < 6:
-            raise ValueError("synthetic_temporal_robustness requires temporal_robustness.max_frames >= 6")
+            raise ValueError("progress_temporal_variation requires temporal_robustness.max_frames >= 6")
         if self.progress_type == "relative_first_frame":
-            raise ValueError("synthetic_temporal_robustness requires an absolute progress_type")
+            raise ValueError("progress_temporal_variation requires an absolute progress_type")
         if self.base_frames < 5:
-            raise ValueError("synthetic_temporal_robustness requires sampling.base_frames >= 5")
+            raise ValueError("progress_temporal_variation requires sampling.base_frames >= 5")
         if self.base_frames > temporal.max_frames:
             raise ValueError("sampling.base_frames must not exceed temporal_robustness.max_frames")
         increasing = {"pause", "rewind", "retry"}.intersection(temporal.transforms)

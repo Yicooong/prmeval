@@ -1,9 +1,8 @@
 sampling:
   dataset_name: rbm_1m_ood
-  adapter: huggingface 
   paths: [/mnt/shared-storage-gpfs2/xxxxx/hf_rbm_1m_ood_datasets/rbm-1m-ood]
   # max_trajectories: 1
-  eval_types: [synthetic_temporal_robustness]
+  eval_types: [progress_temporal_variation]
   base_frames: 5
   progress_type: absolute_first_frame
   random_seed: 42
@@ -22,7 +21,7 @@ infer:
   options:
     max_new_tokens: 128
 
-metrics: [synthetic_temporal_robustness]
+metrics: [progress_temporal_variation]
 output_dir: evaluation_output
 run_name: synthetic-temporal-robustness
 resume: false

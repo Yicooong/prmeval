@@ -2,7 +2,7 @@
 
 这个目录现在是 **Stage 2 的输入 bundle**，不是 Stage 2 的模拟输出。
 
-- `samples.jsonl`：3 条 `bench.record.v1` Record，全部为 `stage: sampled`；
+- `samples.jsonl`：3 条 `bench.record.v1` sampled Record，全部尚无 `execution`；
 - `sample_frames/*.npz`：Stage 2 实际读取的帧数组；
 - `samples.manifest.json`：Stage 1 生成该 bundle 时的采样清单。
 

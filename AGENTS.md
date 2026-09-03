@@ -1,10 +1,15 @@
 # Repository Guidelines
 
+## 
+use `bench` env in conda
+active environment : bench
+active env location : /mnt/shared-storage-user/liuyicong/miniconda3/envs/bench
+
 ## Project Structure & Module Organization
 
-`prmeval/` contains the evaluation package. Schemas, registries, configuration, orchestration, and artifact handling live in `prmeval/core/`; dataset adapters and Stage 1 sampling are in `prmeval/sample/`; model integrations and Stage 2 inference are in `prmeval/infer/`; and Stage 3 metrics are in `prmeval/metrics/`. The main CLI is `prmeval/cli.py`; dataset preprocessing also exposes `prmeval/sample/prepare.py`.
+`prmeval/` contains the evaluation package. Schemas, registries, configuration, orchestration, and artifact handling live in `prmeval/core/`; dataset adapters and Stage 1 sampling are in `prmeval/sample/`; model integrations and Stage 2 inference are in `prmeval/infer/`; and Stage 3 metrics are in `prmeval/metrics/`. The main CLI is `prmeval/cli.py`.
 
-Built-in infer implementations live one model per file in `prmeval/infer/baselines/`, using the registry name as the filename (for example, `topreward` belongs in `baselines/topreward.py`). Shared baseline helpers belong in `baselines/common.py`; generic HTTP and OpenAI-compatible Chat Completions behavior belongs in `infer/base.py` and `infer/openai.py`. Import every built-in baseline from `baselines/__init__.py` so registration occurs when `prmeval.infer` is imported. The runner constructs the registered baseline class directly with `INFERS.get(config.infer.name)` and calls its single-sample `predict()` method; do not add an adapter layer or public batch interface.
+Built-in infer implementations live one model per file in `prmeval/infer/baselines/`, using the registry name as the filename (for example, `topreward` belongs in `baselines/topreward.py`). Generic HTTP and OpenAI-compatible Chat Completions behavior belongs in `infer/base.py` and `infer/openai.py`. Import every built-in baseline from `baselines/__init__.py` so registration occurs when `prmeval.infer` is imported. The runner constructs the registered baseline class directly with `INFERS.get(config.infer.name)` and calls its single-sample `predict()` method; do not add an adapter layer or public batch interface.
 
 `dataset_unify/` is a separate raw-dataset conversion tool. Its loaders are in `dataset_unify/dataset_loaders/`, converter registration is in `dataset_unify/converters.py`, conversion YAML files are in `dataset_unify/configs/data_gen_configs/`, and source-specific instructions are in `dataset_unify/dataset_guides/`. Do not make PRMEval import dataset-specific loaders directly.
 

@@ -19,7 +19,6 @@ dependencies = [
 
 [project.scripts]
 prmeval-eval = "prmeval.cli:main"
-prmeval-data-preprocess = "prmeval.sample.prepare:main"
 
 [project.optional-dependencies]
 local-hf = [

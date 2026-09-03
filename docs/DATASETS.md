@@ -1,85 +1,68 @@
-# 本地数据格式与 Dataset Adapter
+# 本地 Hugging Face Dataset
 
-Dataset adapter 将不同本地存储格式转换成内部统一的 `Trajectory`。当前提供 `jsonl` 和 `huggingface` 两种 adapter。
+PRMEval Stage 1 只读取由 `datasets.load_from_disk()` 保存的本地 Hugging Face Dataset，不再提供
+JSONL 数据源或 Dataset Adapter。异构原始数据应先通过独立的 [`dataset_unify`](../dataset_unify/)
+工具转换成统一 Dataset。
 
-原始数据集的标准化不属于 PRMEval 评测流程。需要转换异构数据时，请使用独立的 [`dataset_unify`](../dataset_unify/) 工具；其标准字段、转换配置、校验命令和新增 loader 方法见 [`dataset_unify/README.md`](../dataset_unify/README.md)。
+## 配置
 
-## JSONL adapter
-
-JSONL adapter 适合冒烟测试、小型自定义数据集和已经具有 NPZ 帧的数据。推荐目录结构：
-
-```text
-my_dataset/
-├── trajectories.jsonl
-└── frames/
-    ├── trajectory-001.npz
-    └── trajectory-002.npz
-```
-
-`trajectories.jsonl` 每行表示一条完整轨迹：
-
-```json
-{"id":"trajectory-001","task":"pick up the red block","frames":"frames/trajectory-001.npz","data_source":"my-dataset","quality_label":"successful","partial_success":1.0}
-```
-
-必填字段为：
-
-- `id`：轨迹 ID；
-- `task`：自然语言任务；
-- `frames`：NPZ 路径或内嵌帧数组。
-
-NPZ 文件必须包含名为 `frames` 的数组，推荐格式：
-
-```text
-shape = [T, H, W, C]
-dtype = uint8
-C = 3
-```
-
-JSONL 中的相对帧路径以该 JSONL 文件所在目录为基准。
-
-评测配置示例：
-
-```yaml
-sampling:
-  dataset_name: my-dataset
-  adapter: jsonl
-  paths: [my_dataset/trajectories.jsonl]
-```
-
-数据源 JSONL 和 Stage 1 生成的 `samples.jsonl` 使用不同协议：
-
-```text
-trajectories.jsonl  --jsonl adapter-->  Trajectory
-Trajectory          --sampler------->  samples.jsonl
-samples.jsonl        --Stage 2------>   predictions.jsonl
-```
-
-## Hugging Face adapter
-
-Hugging Face adapter 适合较大的本地数据集和包含视频的正式评测。`paths` 中的每一项都必须是可由 `datasets.load_from_disk()` 读取的完整目录：
+`sampling.paths` 中的每一项都必须是一个完整的 Dataset 或 DatasetDict 目录：
 
 ```yaml
 sampling:
   dataset_name: rbm-1m-ood
-  adapter: huggingface
   paths: [/path/to/hf_datasets/rbm-1m-ood]
+  eval_types: [progress]
 ```
 
-目录中的 `frames` 可以是内嵌数组、NPZ 路径或视频路径，也兼容 `frames_video`、`video`、`frames_path` 字段。相对路径以各自的 Dataset 目录为基准解析；`dataset_name` 只用于评测记录和 sample ID，不用于拼接磁盘路径。
+`dataset_name` 用于评测记录和 sample ID，不参与磁盘路径拼接。相对路径以运行命令时的当前目录为基准。
 
-由 `dataset_unify` 生成的标准 Hugging Face Dataset 可以直接交给该 adapter。MP4 解码优先使用 PyAV，不可用时回退到系统 `ffmpeg`/`ffprobe`。
+## 数据池
 
-## 从原始数据到评测
+`load_hf_trajectory_pool()` 依次读取 `paths`、将 Dataset 行标准化为 `Trajectory`，过滤掉失败、次优、
+部分成功和完全未标注的轨迹，并返回一个遵守 `max_trajectories` 限制的 `list[Trajectory]`。成功轨迹定义为
+`quality_label: successful`，或在质量标签缺失时 `partial_success: 1.0`：
 
-完整的数据边界是：
+```text
+local Hugging Face Dataset
+    -> EvalSampler.pool
+    -> Trajectory
+    -> EvalSampler.sample()
+    -> ProgressSample / PreferenceSample
+```
+
+Runner 每次运行只加载一次 Dataset，并把同一个 pool 列表注入所有 sampler。不同 sampler 可以独立遍历、
+分组和筛选列表，但不应修改共享列表本身。视频帧仍然保持路径引用，只在具体 sampler 抽帧时物化。
+
+由于 pool 只包含成功轨迹，`quality_preference` 以及需要多个质量等级的 `policy_ranking` 不适用于该加载模式。
+
+## 字段与帧加载
+
+每行至少需要：
+
+- `id`：轨迹 ID；
+- `task`：自然语言任务；
+- `frames`：内嵌数组、NPZ 路径或视频路径。
+
+同时兼容 `frames_video`、`video`、`frames_path` 字段。相对帧路径以所属 Dataset 目录为基准解析。
+视频列会尽量以 `Video(decode=False)` 读取，避免 Dataset 在遍历时提前解码；真正抽帧时再由公共帧加载工具
+完成 NPZ 或视频物化。
+
+模拟轨迹可设置 `is_simulation: true` 并提供与源视频帧数一致的逐帧 `target_progress`。这种轨迹在
+progress 与 progress temporal variation 采样中直接复用所提供的目标进度（抽帧后按相同索引取值），
+不会再按 `progress_type` 计算目标进度；长度不一致会在采样时直接报错。
+
+由 `dataset_unify` 生成的标准 Dataset 可直接用于采样。MP4 解码优先使用 PyAV，不可用时回退到系统
+`ffmpeg`/`ffprobe`。
+
+## 完整数据边界
 
 ```text
 异构原始数据
     -> dataset_unify
     -> 本地标准 Hugging Face Dataset
-    -> huggingface adapter
+    -> EvalSampler.pool
     -> PRMEval Stage 1 / Stage 2 / Stage 3
 ```
 
-PRMEval 只读取转换后的本地产物，不依赖各原始数据集的 loader，也不会上传数据。
+PRMEval 不直接依赖原始数据集 loader，也不会上传数据。

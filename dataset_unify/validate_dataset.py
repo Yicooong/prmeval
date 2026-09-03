@@ -8,7 +8,6 @@ import argparse
 from typing import Any
 
 import numpy as np
-
 from datasets import Dataset, load_from_disk
 
 
@@ -31,8 +30,10 @@ def validate_dataset_fields_and_types(dataset: Dataset, sample_size: int = 10) -
         "data_source",
         "frames",
         "is_robot",
+        "is_simulation",
         "quality_label",
         "partial_success",
+        "target_progress",
     ]
 
     # Check if dataset has features
@@ -81,6 +82,9 @@ def validate_dataset_fields_and_types(dataset: Dataset, sample_size: int = 10) -
             if not isinstance(trajectory["is_robot"], bool):
                 validation_results["errors"].append(f"Trajectory {idx}: 'is_robot' is not a boolean")
 
+            if not isinstance(trajectory["is_simulation"], bool):
+                validation_results["errors"].append(f"Trajectory {idx}: 'is_simulation' is not a boolean")
+
             if trajectory["quality_label"] is not None and not isinstance(trajectory["quality_label"], str):
                 validation_results["errors"].append(f"Trajectory {idx}: 'quality_label' is neither None nor a string")
             elif trajectory["quality_label"] is not None:
@@ -96,8 +100,19 @@ def validate_dataset_fields_and_types(dataset: Dataset, sample_size: int = 10) -
                         f"Trajectory {idx}: 'partial_success' is neither None nor numeric"
                     )
                 elif not 0.0 <= float(partial_success) <= 1.0:
+                    validation_results["errors"].append(f"Trajectory {idx}: 'partial_success' is outside [0, 1]")
+
+            target_progress = trajectory.get("target_progress")
+            if target_progress is not None:
+                if not isinstance(target_progress, list) or any(
+                    not isinstance(value, (int, float, np.floating, np.integer)) for value in target_progress
+                ):
                     validation_results["errors"].append(
-                        f"Trajectory {idx}: 'partial_success' is outside [0, 1]"
+                        f"Trajectory {idx}: 'target_progress' is neither None nor a numeric list"
+                    )
+                elif any(not 0.0 <= float(value) <= 1.0 for value in target_progress):
+                    validation_results["errors"].append(
+                        f"Trajectory {idx}: 'target_progress' contains values outside [0, 1]"
                     )
 
             # Print sample task for first trajectory

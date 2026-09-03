@@ -6,13 +6,13 @@ import logging
 import sys
 from pathlib import Path
 
-from .core.artifacts import validate_sample_artifacts
 from .core.config import EvalConfig
-from .core.registry import DATASETS, INFERS, METRICS, SAMPLERS
+from .core.registry import INFERS, METRICS, SAMPLERS
 from .core.runner import Evaluator
 from .core.schemas import EvaluationRecord, jsonable
+from .core.utils import validate_sample_artifacts
 from .metrics.builtins import compute_metrics
-from .sample.adapters import create_dataset_adapter
+from .sample import load_hf_trajectory_pool
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -34,7 +34,6 @@ def build_parser() -> argparse.ArgumentParser:
     stage_metrics.add_argument("--config", required=True)
     stage_metrics.add_argument("--predictions", help="Optional predictions.jsonl source")
     stage_metrics.add_argument("--no-progress", action="store_true", help="Disable terminal progress bars")
-    sub.add_parser("list-datasets")
     sub.add_parser("list-infers")
     sub.add_parser("list-samplers")
     sub.add_parser("list-metrics")
@@ -80,11 +79,7 @@ def _metric_summary_for_stdout(summary: dict) -> dict:
         **summary,
         "metrics": {
             name: (
-                {
-                    key: value
-                    for key, value in result.items()
-                    if key not in {"details", "task_details"}
-                }
+                {key: value for key, value in result.items() if key not in {"details", "task_details"}}
                 if isinstance(result, dict)
                 else result
             )
@@ -95,9 +90,7 @@ def _metric_summary_for_stdout(summary: dict) -> dict:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    if args.command == "list-datasets":
-        print("\n".join(DATASETS.names()))
-    elif args.command == "list-infers":
+    if args.command == "list-infers":
         print("\n".join(INFERS.names()))
     elif args.command == "list-samplers":
         print("\n".join(SAMPLERS.names()))
@@ -105,7 +98,7 @@ def main(argv: list[str] | None = None) -> int:
         print("\n".join(METRICS.names()))
     elif args.command == "validate-dataset":
         config = EvalConfig.from_yaml(args.config)
-        trajectories = list(create_dataset_adapter(config.sampling).load())
+        trajectories = load_hf_trajectory_pool(config.sampling)
         print(json.dumps({"valid": True, "trajectories": len(trajectories)}, indent=2))
     elif args.command == "validate-samples":
         print(json.dumps(validate_sample_artifacts(Path(args.samples)), indent=2, ensure_ascii=False))
@@ -118,17 +111,29 @@ def main(argv: list[str] | None = None) -> int:
         ]
         if len(identities) != len(set(identities)):
             raise ValueError(f"Duplicate dataset/infer/sample identity found in {source}")
-        print(json.dumps({
-            "valid": True,
-            "schema_version": "bench.record.v1",
-            "records": len(records),
-            "path": str(source),
-        }, indent=2, ensure_ascii=False))
+        print(
+            json.dumps(
+                {
+                    "valid": True,
+                    "schema_version": "bench.record.v1",
+                    "records": len(records),
+                    "path": str(source),
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
     elif args.command == "compute-metrics":
         configured_source = Path(args.predictions)
         source = configured_source.resolve()
         records = _load_records(source)
-        metric_names = args.metrics or sorted({record.evaluation.type for record in records})
+        legacy_metric_names = {
+            "reward_alignment": "progress",
+            "synthetic_temporal_robustness": "progress_temporal_variation",
+        }
+        metric_names = args.metrics or sorted(
+            {legacy_metric_names.get(record.evaluation.type, record.evaluation.type) for record in records}
+        )
         payload = {
             "source": str(configured_source),
             "num_records": len(records),

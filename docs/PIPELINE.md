@@ -9,19 +9,19 @@ PRMEval 将一次评测拆成三个可独立运行和验证的阶段。Stage 1 �
 Stage 1: sample
     │  samples.jsonl + sample_frames/*.npz
     ▼
-EvaluationRecord(stage="sampled")
+EvaluationRecord
     │
     ▼
 Stage 2: infer
     │  predictions.jsonl / errors.jsonl
     ▼
-EvaluationRecord(stage="inferred")
+EvaluationRecord(execution.status="success|error")
     │
     ▼
 Stage 3: metrics
     │
     ▼
-all_metrics.json + 分数据集结果
+metrics.json + metrics_detail.jsonl
 ```
 
 完整字段、必填规则和 JSON 示例见 [EvaluationRecord 数据结构](RECORD_SCHEMA.md)。
@@ -30,26 +30,26 @@ all_metrics.json + 分数据集结果
 
 Stage 1 负责：
 
-- 通过 Dataset Adapter 将不同数据源转换为统一内部轨迹；
+- 通过 `EvalSampler.pool` 从本地 Hugging Face Dataset 生成统一内部轨迹；
 - 按 eval type 选择轨迹和图像帧；
 - 构造指标真值 `target`；
 - 将帧保存为 NPZ，在 Record 中只保留 `FrameReference`；
-- 写入 `stage: sampled` 的 `samples.jsonl`。
+- 写入尚无 `execution` 的 sampled Record 到 `samples.jsonl`。
 
 内部流程为：
 
 ```text
-DatasetAdapter
+EvalSampler.pool (local Hugging Face Dataset)
     -> Trajectory
-    -> EvalSampler
+    -> EvalSampler.sample()
     -> ProgressSample / PreferenceSample
-    -> EvaluationRecord(stage="sampled")
+    -> EvaluationRecord
     -> samples.jsonl + sample_frames/*.npz
 ```
 
 当前 v1 不包含 prefix sampling。一条 `sample_id` 对应一次模型请求和一条完整预测曲线。
 
-对于 `reward_alignment`，采样器选择可用的成功轨迹，按 `base_frames` 均匀抽帧，并使用相同帧索引构造 `target.progress`。默认的 `absolute_first_frame` 定义为：
+对于 `progress`，采样器选择可用的成功轨迹，按 `base_frames` 均匀抽帧，并使用相同帧索引构造 `target.progress`。默认的 `absolute_first_frame` 定义为：
 
 ```text
 progress = (frame_index - first_index) / (total_frames - first_index - 1)
@@ -61,7 +61,7 @@ progress = (frame_index - first_index) / (total_frames - first_index - 1)
 NPZ 帧数量 = frame_indices 数量 = target.progress 数量
 ```
 
-`synthetic_temporal_robustness` 先从成功轨迹得到一条基准采样序列，再通过索引映射派生停滞、变速、
+`progress_temporal_variation` 先从成功轨迹得到一条基准采样序列，再通过索引映射派生停滞、变速、
 回退、重试、截断和跳帧样本。每个合成帧的 target 都直接查找其原始帧 progress；重复索引复制 target，
 反向索引产生下降 target，不会按新视频的时间位置重新标注。变换类型、参数、基准/最终帧数和长度比例保存在
 input item 的 `synthetic_temporal` metadata 中。默认长度限制为基准帧数的 70%～170%，并继续受
@@ -79,7 +79,7 @@ python -m prmeval.cli validate-samples \
 
 ## Stage 2：单入口模型推理
 
-Stage 2 只接收 `EvaluationRecord(stage="sampled")`。它加载 NPZ 帧，通过 registry 直接构造具体 baseline，并按样本顺序调用统一的 `predict()`：
+Stage 2 只接收尚无 `execution` 的 sampled Record。它加载 NPZ 帧，通过 registry 直接构造具体 baseline，并按样本顺序调用统一的 `predict()`：
 
 ```text
 Evaluator.infer()
@@ -88,7 +88,7 @@ Evaluator.infer()
     -> record_to_sample(record, bundle_dir)
     -> infer.predict(sample)
     -> ProgressPrediction / PreferencePrediction
-    -> EvaluationRecord(stage="inferred")
+    -> EvaluationRecord(execution.status="success|error")
 ```
 
 只有一个抽象父类 `Infer`。框架不区分 local 和 remote，也不提供 adapter、公共 batch、线程池或执行模式分派。checkpoint 加载、provider SDK 和 HTTP 调用均由具体 baseline 自己处理。Runner 只理解 `capabilities` 与标准 Prediction。
@@ -101,7 +101,7 @@ Progress baseline 的 `predict()` 校验 `ProgressSample`，把 frames、task �
 {
   "infer": {"name": "progress_test", "model": "your-model"},
   "prediction": {"kind": "progress", "values": [0.0, 0.5, 1.0]},
-  "execution": {"status": "success", "attempts": 1}
+  "execution": {"status": "success"}
 }
 ```
 
@@ -130,25 +130,25 @@ python -m prmeval.cli validate-predictions \
 Stage 3 只读取满足以下条件的记录：
 
 ```text
-stage = inferred
 execution.status = success
 ```
 
-它不读取原始 dataset、不加载 NPZ，也不调用模型。Metric 不修改 `EvaluationRecord.stage`；指标完成状态记录在 `all_metrics.json` 和 `run_manifest.json` 中。
+它不读取原始 dataset、不加载 NPZ，也不调用模型。聚合结果写入 `metrics.json`；完整 Record 与逐条指标写入
+`metrics_detail.jsonl`。需要联合多条 Record 的指标还会写入 `detail_type: group` 的分组明细。
 
 当前内置评测包括：
 
 | 评测 | 输入 | 指标 |
 |---|---|---|
-| `reward_alignment` | target progress 与 prediction progress | MSE、Pearson |
-| `synthetic_temporal_robustness` | 合成后的逐帧 progress 与 prediction | MAE、趋势、回退、平台、终点、单调性与时间捷径 |
+| `progress` | target progress 与 prediction progress | MSE、Pearson |
+| `progress_temporal_variation` | 合成变化后的逐帧 progress 与 prediction | MAE、趋势、回退、平台、终点、单调性与时间捷径 |
 | `policy_ranking` | 任务内质量排序与预测终态 progress | Kendall |
 | `quality_preference` | chosen/rejected 轨迹偏好 | Accuracy |
 | `confusion_matrix` | 语言任务与视频任务匹配结果 | 混淆矩阵 |
 
-`reward_alignment` 对每条样本分别计算 MSE 和 Pearson，再对样本等权平均，并按 `evaluation.dataset.name` 和 `infer.name` 切片。
+`progress` 对每条样本分别计算 MSE 和 Pearson，再对样本等权平均，并按 `evaluation.dataset.name` 和 `infer.name` 切片。
 
-Policy ranking 使用 `target(kind=rank).value`、`prediction(kind=progress).values` 和 `input.task_id`，按 dataset、infer 和 task 分组后计算 Kendall。
+Policy ranking 使用 `target(kind=rank).value`、`prediction(kind=progress).values` 和 `input.task`，按 dataset、infer 和 task 分组后计算 Kendall。
 
 运行 Stage 3：
 
@@ -161,7 +161,7 @@ python -m prmeval.cli metrics --config configs/eval/progress_test_remote.yaml
 ```bash
 python -m prmeval.cli compute-metrics \
   --predictions examples/stage_3_smoke/predictions.jsonl \
-  --metrics reward_alignment \
+  --metrics progress \
   --output /tmp/prmeval-metrics.json
 ```
 
@@ -179,7 +179,7 @@ Stage 1 sample_id -> Stage 2 sample_id -> Stage 3 明细 sample_id
 (dataset.name, infer.name, sample_id)
 ```
 
-原始轨迹编号可以放在 `source.id`，用于审计和定位，但不参与核心去重与 reward alignment 分组。
+原始轨迹编号放在 `input.items[].source_id`，用于审计和定位，但不参与核心去重或指标分组。
 
 ## 运行产物与断点续跑
 
@@ -191,22 +191,20 @@ Stage 1 sample_id -> Stage 2 sample_id -> Stage 3 明细 sample_id
 evaluation_output/<run_name>/
 ├── samples.jsonl
 ├── sample_frames/
-├── sample_manifest.json
 ├── predictions.jsonl
 ├── errors.jsonl
-├── inference_summary.json
-├── run_manifest.json
-├── all_metrics.json
-└── reward_alignment/
-    └── <dataset>_results.json
+├── metrics.json
+└── metrics_detail.jsonl
 ```
 
 当 `resume: true` 时：
 
-- Stage 1 使用 sampling 指纹判断是否可以复用已有 samples；
+- Stage 1 验证并复用已有 `samples.jsonl`；
 - Stage 2 跳过已经成功的 `sample_id`；
 - 失败样本可以在下次运行时重试；
-- 配置指纹不一致时会拒绝向同一输出目录混写。
+- Stage 3 根据当前全部成功 Record 重写两个指标文件。
+
+框架不再保存或比较配置指纹。数据、采样配置或模型配置发生变化时，应使用新的 `run_name`，避免向同一目录混写。
 
 运行产物默认位于 `evaluation_output/`，该目录不应提交到 Git。
 
