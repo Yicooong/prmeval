@@ -125,6 +125,17 @@ _register_trajectory_converter(
     "load_metaworld_dataset",
     kwargs_factory=lambda cfg: {"dataset_name": cfg.dataset.dataset_name},
 )
+_register_trajectory_converter(
+    "simulator_rollout",
+    "dataset_unify.dataset_loaders.simulator_rollout_loader",
+    "load_simulator_rollout_dataset",
+    patterns=("simulator_rollout", "sim-prm-simulator"),
+    kwargs_factory=lambda cfg: {
+        "dataset_name": cfg.dataset.dataset_name,
+        "view": cfg.dataset.view,
+        "max_trajectories": cfg.output.max_trajectories,
+    },
+)
 _register_direct_converter("h2r", "dataset_unify.dataset_loaders.h2r_loader", "convert_h2r_dataset_to_hf")
 _register_direct_converter(
     "fino-net",

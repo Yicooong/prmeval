@@ -11,6 +11,7 @@ This directory contains detailed guides for specific datasets supported by the R
 | **LIBERO** | Simulation | ~5GB | HDF5, Multi-env | [📖 LIBERO.md](LIBERO.md) |
 | **FinoNet** | Manipulation | ~10GB | Success/Failure, PNG | [📖 FinoNet.md](FinoNet.md) |
 | **H2R** | Human-Robot | ~ | Paired videos | [📖 H2R.md](H2R.md) |
+| **Simulator Rollout** | Simulation | Local | Frame-aligned simulator progress | [📖 SimulatorRollout.md](SimulatorRollout.md) |
 
 ### Custom Integration
 | Type | Description | Guide |

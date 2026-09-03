@@ -71,6 +71,7 @@ class DatasetConfig:
     dataset_path: str = field(default="", metadata={"help": "Path to the dataset"})
     dataset_name: Optional[str] = field(default=None, metadata={"help": "Name of the dataset (required)"})
     exclude_wrist_cam: bool = field(default=False, metadata={"help": "Exclude wrist camera views (MIT Franka only)"})
+    view: str = field(default="external_main", metadata={"help": "Semantic camera view for simulator rollouts"})
 
 
 @dataclass
