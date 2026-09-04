@@ -40,8 +40,8 @@ pip install -e '.[local-hf,local-qwen]'
 
 ## 快速开始
 
-仓库提供了调用通用远程模型 `progress_test` 的端到端冒烟配置
-[`configs/eval/progress_test_remote.yaml`](configs/eval/progress_test_remote.yaml)。运行前设置 OpenAI-compatible
+仓库提供了调用通用远程模型 `openai_compatible` 的端到端冒烟配置
+[`configs/eval/openai_compatible_remote.yaml`](configs/eval/openai_compatible_remote.yaml)。运行前设置 OpenAI-compatible
 服务信息，并将配置中的 `sampling.paths` 改为由 `datasets.save_to_disk()` 保存的本地 Dataset 目录：
 
 ```bash
@@ -53,27 +53,27 @@ export MODEL_ID='your-model-id'
 连续执行采样、推理和指标计算：
 
 ```bash
-prmeval run --config configs/eval/progress_test_remote.yaml
+prmeval run --config configs/eval/openai_compatible_remote.yaml
 ```
 
 命令行会在交互式终端中使用 `tqdm` 分别展示 Sample、Infer 和 Metrics 三个阶段的进度，并输出阶段开始、完成及断点续跑跳过数量。动态进度写入 stderr，最终 JSON 摘要写入 stdout，因此可以安全地重定向结果：
 
 ```bash
-prmeval run --config configs/eval/progress_test_remote.yaml > summary.json
+prmeval run --config configs/eval/openai_compatible_remote.yaml > summary.json
 ```
 
 在 CI、管道等非交互环境中，动态进度条会自动关闭，阶段日志仍会保留。也可以手动关闭动态进度条：
 
 ```bash
-prmeval run --config configs/eval/progress_test_remote.yaml --no-progress
+prmeval run --config configs/eval/openai_compatible_remote.yaml --no-progress
 ```
 
 也可以单独运行各阶段：
 
 ```bash
-prmeval sample --config configs/eval/progress_test_remote.yaml
-prmeval infer --config configs/eval/progress_test_remote.yaml
-prmeval metrics --config configs/eval/progress_test_remote.yaml
+prmeval sample --config configs/eval/openai_compatible_remote.yaml
+prmeval infer --config configs/eval/openai_compatible_remote.yaml
+prmeval metrics --config configs/eval/openai_compatible_remote.yaml
 ```
 查看已注册组件：
 

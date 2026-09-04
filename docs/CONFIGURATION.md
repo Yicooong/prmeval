@@ -1,6 +1,6 @@
 # 配置文件说明
 
-PRMEval 使用一个 YAML 文件描述采样、推理、指标和产物目录。下面示例调用 `progress_test` 完成 Stage 1 → Stage 2 → Stage 3：
+PRMEval 使用一个 YAML 文件描述采样、推理、指标和产物目录。下面示例调用 `openai_compatible` 完成 Stage 1 → Stage 2 → Stage 3：
 
 ```yaml
 sampling:
@@ -12,7 +12,7 @@ sampling:
   progress_type: absolute_first_frame
 
 infer:
-  name: progress_test
+  name: openai_compatible
   base_url: BASE_URL
   api_key: OPENAI_API_KEY
   model_id: MODEL_ID
@@ -129,7 +129,7 @@ infer:
 
 # OpenAI-compatible baseline
 infer:
-  name: progress_test
+  name: openai_compatible
   base_url: BASE_URL
   api_key: OPENAI_API_KEY
   model_id: MODEL_ID

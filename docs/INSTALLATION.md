@@ -57,10 +57,10 @@ wheel 只收集 `prmeval/` 下的包文件，以及安装所必需的 `*.dist-in
 先将示例配置中的 `sampling.paths` 改为本地 Hugging Face Dataset 目录，再执行：
 
 ```bash
-prmeval run --config configs/eval/progress_test_remote.yaml
-prmeval sample --config configs/eval/progress_test_remote.yaml
-prmeval infer --config configs/eval/progress_test_remote.yaml
-prmeval metrics --config configs/eval/progress_test_remote.yaml
+prmeval run --config configs/eval/openai_compatible_remote.yaml
+prmeval sample --config configs/eval/openai_compatible_remote.yaml
+prmeval infer --config configs/eval/openai_compatible_remote.yaml
+prmeval metrics --config configs/eval/openai_compatible_remote.yaml
 ```
 
 `prmeval` 不会自动读取 `.env`。配置使用环境变量名时，必须在运行命令前导出对应变量。

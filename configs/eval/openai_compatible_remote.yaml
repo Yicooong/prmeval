@@ -7,7 +7,7 @@ sampling:
   progress_type: absolute_first_frame
 
 infer:
-  name: progress_test
+  name: openai_compatible
   base_url: BASE_URL
   api_key: OPENAI_API_KEY
   model_id: MODEL_ID
@@ -21,5 +21,5 @@ infer:
 metrics: [progress]
 mode: separate
 output_dir: evaluation_output
-run_name: progress-test-remote
+run_name: openai-compatible-remote
 resume: false

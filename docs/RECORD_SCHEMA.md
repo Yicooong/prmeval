@@ -84,7 +84,7 @@ source ID，但拥有不同 sample ID。
 
 ```json
 {
-  "name": "progress_test",
+  "name": "openai_compatible",
   "model": "remote-model-or-checkpoint",
   "version": null
 }

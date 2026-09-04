@@ -14,16 +14,16 @@ prmeval validate-samples \
   --samples examples/stage_2_smoke/samples.jsonl
 ```
 
-调用 `progress_test` infer：
+调用 `openai_compatible` infer：
 
 ```bash
 export OPENAI_API_KEY='your-key'
 export BASE_URL='https://your-service.example.com/v1'
 export MODEL_ID='your-model-id'
 prmeval infer \
-  --config configs/eval/progress_test_remote.yaml \
+  --config configs/eval/openai_compatible_remote.yaml \
   --samples examples/stage_2_smoke/samples.jsonl \
-  --output evaluation_output/progress-test-smoke/predictions.jsonl
+  --output evaluation_output/openai-compatible-smoke/predictions.jsonl
 ```
 
 配置加载时会从环境变量展开服务地址和模型 ID。

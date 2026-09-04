@@ -5,8 +5,8 @@ sampling:
   eval_types: [progress_temporal_variation]
   base_frames: 5
   progress_type: absolute_first_frame
-  random_seed: 42
   temporal_robustness:
+    random_seed: 42
     max_frames: 8
     min_length_ratio: 0.7
     max_length_ratio: 1.7

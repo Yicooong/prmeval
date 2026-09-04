@@ -34,7 +34,7 @@ venv_robodopamine.txt
 configs/eval/*
 !configs/eval/synthetic_temporal_robustness.yaml
 !configs/eval/reward_alignment.yaml
-!configs/eval/progress_test_remote.yaml
+!configs/eval/openai_compatible_remote.yaml
 tests/
 AGENTS.md
 # Editor and operating-system temporary files

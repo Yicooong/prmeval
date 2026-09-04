@@ -73,9 +73,9 @@ input item 的 `synthetic_temporal` metadata 中。默认长度限制为基准�
 运行并验证 Stage 1：
 
 ```bash
-prmeval sample --config configs/eval/progress_test_remote.yaml
+prmeval sample --config configs/eval/openai_compatible_remote.yaml
 prmeval validate-samples \
-  --samples evaluation_output/progress-test-remote/samples.jsonl
+  --samples evaluation_output/openai-compatible-remote/samples.jsonl
 ```
 
 ## Stage 2：单入口模型推理
@@ -105,7 +105,7 @@ Progress baseline 的 `predict()` 接收样本列表，并为每个样本构造�
 
 ```json
 {
-  "infer": {"name": "progress_test", "model": "your-model"},
+  "infer": {"name": "openai_compatible", "model": "your-model"},
   "prediction": {"kind": "progress", "values": [0.0, 0.5, 1.0]},
   "execution": {"status": "success"}
 }
@@ -115,7 +115,7 @@ Progress baseline 的 `predict()` 接收样本列表，并为每个样本构造�
 该批次的所有样本都会记为失败，后续批次继续执行。成功的 progress prediction 不保存远程 raw response；远程失败可通过
 `RemoteError.raw_response` 写入错误记录。
 
-`progress_test` 在模型实例内部组合 `OpenAIChatClient`。模型内部需要的 prefix 或 tensor micro-batch 是 baseline
+`openai_compatible` 在模型实例内部使用官方 OpenAI Python SDK。模型内部需要的 prefix 或 tensor micro-batch 是 baseline
 私有实现细节，与 Runner 的 `infer.batch_size` 分组相互独立。
 
 Stage 2 不会重新抽帧。普通采样的模型输入帧数由 Stage 1 的 `sampling.base_frames` 控制；时序鲁棒样本还会受 `sampling.temporal_robustness.max_frames` 的最终硬上限约束。这样模型输入、target 和 progress prediction 始终一一对应。接口与注册示例见 [Infer 模型接入](INFER_MODELS.md)，连接和模型字段见 [配置文件说明](CONFIGURATION.md#infer)。
@@ -129,9 +129,9 @@ prmeval list-infers
 运行并验证 Stage 2：
 
 ```bash
-prmeval infer --config configs/eval/progress_test_remote.yaml
+prmeval infer --config configs/eval/openai_compatible_remote.yaml
 prmeval validate-predictions \
-  --predictions evaluation_output/progress-test-remote/predictions.jsonl
+  --predictions evaluation_output/openai-compatible-remote/predictions.jsonl
 ```
 
 ## Stage 3：指标计算
@@ -162,7 +162,7 @@ Policy ranking 使用 `target(kind=rank).value`、`prediction(kind=progress).val
 运行 Stage 3：
 
 ```bash
-prmeval metrics --config configs/eval/progress_test_remote.yaml
+prmeval metrics --config configs/eval/openai_compatible_remote.yaml
 ```
 
 也可以不调用模型，直接从已有预测重新计算指标：
@@ -222,7 +222,7 @@ evaluation_output/<run_name>/
 连续运行三个阶段：
 
 ```bash
-prmeval run --config configs/eval/progress_test_remote.yaml
+prmeval run --config configs/eval/openai_compatible_remote.yaml
 ```
 
 顶层 `mode` 控制 `run` 如何连接三个阶段：
@@ -240,7 +240,7 @@ CLI 默认向 stderr 输出阶段日志，并在交互式终端中展示各阶�
 进度和日志使用 stderr，最终 JSON 摘要使用 stdout。例如下面的命令只将摘要写入文件：
 
 ```bash
-prmeval run --config configs/eval/progress_test_remote.yaml > summary.json
+prmeval run --config configs/eval/openai_compatible_remote.yaml > summary.json
 ```
 
 也可以通过 Python API 调用：
@@ -248,7 +248,7 @@ prmeval run --config configs/eval/progress_test_remote.yaml > summary.json
 ```python
 from prmeval import EvalConfig, Evaluator
 
-config = EvalConfig.from_yaml("configs/eval/progress_test_remote.yaml")
+config = EvalConfig.from_yaml("configs/eval/openai_compatible_remote.yaml")
 evaluator = Evaluator(config)
 
 sample_summary = evaluator.sample()

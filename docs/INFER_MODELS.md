@@ -111,7 +111,7 @@ infer:
 
 ```yaml
 infer:
-  name: progress_test
+  name: openai_compatible
   base_url: BASE_URL
   api_key: OPENAI_API_KEY
   model_id: MODEL_ID
@@ -131,5 +131,6 @@ infer:
 Runner 不提供线程池或 local/remote transport 分派。模型内部的 tensor micro-batch、prefix 推理或请求策略都属于
 baseline 私有实现，不应再增加一层 Runner adapter。
 
-Torch、Transformers 以及模型专属库属于可选依赖，建议在 baseline 构造阶段导入。OpenAI-compatible 请求可组合
-`OpenAIChatClient`；它不是 `Infer` 子类。远程失败可以通过 `RemoteError.raw_response` 将原始响应写入错误记录。
+Torch、Transformers 以及模型专属库属于可选依赖，建议在 baseline 构造阶段导入。`openai_compatible`
+baseline 使用官方 OpenAI Python SDK 调用兼容服务。远程响应解析失败时可通过 `RemoteError.raw_response`
+将原始响应写入错误记录。

@@ -95,7 +95,7 @@ def parse_json_content(content: Any) -> dict[str, Any]:
         # A few OpenAI-compatible servers occasionally wrap otherwise valid
         # structured output in a Markdown fence or emit one duplicated opening
         # brace. Recover only a complete JSON object; schema validation still
-        # runs in OpenAIChatClient.chat after this function returns.
+        # runs in the calling baseline after this function returns.
         fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", text, flags=re.IGNORECASE | re.DOTALL)
         if fenced:
             text = fenced.group(1).strip()

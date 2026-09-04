@@ -8,7 +8,7 @@ sampling:
   progress_type: absolute_first_frame
 
 infer:
-  name: progress_test
+  name: openai_compatible
   base_url: BASE_URL
   api_key: OPENAI_API_KEY
   model_id: MODEL_ID
