@@ -15,4 +15,4 @@ prmeval validate-samples \
 ```
 
 Stage 1 不会发送模型请求。不过三个阶段共用同一个配置对象，因此仍需设置配置中引用的 `BASE_URL`、
-`OPENAI_API_KEY` 和 `MODEL_ID`，以便配置校验通过。
+`API_KEY` 和 `MODEL_ID`，以便配置校验通过。

@@ -14,7 +14,7 @@ sampling:
 infer:
   name: openai_compatible
   base_url: BASE_URL
-  api_key: OPENAI_API_KEY
+  api_key: API_KEY
   model_id: MODEL_ID
   timeout_seconds: 120
   max_retries: 0
@@ -131,7 +131,7 @@ infer:
 infer:
   name: openai_compatible
   base_url: BASE_URL
-  api_key: OPENAI_API_KEY
+  api_key: API_KEY
   model_id: MODEL_ID
   max_retries: 2
 ```

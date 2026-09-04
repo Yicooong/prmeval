@@ -11,7 +11,7 @@
 目录。模板限制最多读取一条 trajectory；实际请求批次数量取决于生成的样本数和 `infer.batch_size`。
 
 ```bash
-export OPENAI_API_KEY='your-key'
+export API_KEY='your-key'
 export BASE_URL='https://your-service.example.com/v1'
 export MODEL_ID='your-model-id'
 

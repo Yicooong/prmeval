@@ -758,8 +758,8 @@ def build_payload(
     tasks: list[str],
     front_frames: list[np.ndarray],
     wrist_frames: list[np.ndarray] | None,
-    from_zero: bool,
-    temperature: float,
+    from_zero: bool = False,
+    temperature: float = 1.0,
 ) -> dict:
     """
     Build the request payload for the reward server.

@@ -45,7 +45,7 @@ pip install -e '.[local-hf,local-qwen]'
 服务信息，并将配置中的 `sampling.paths` 改为由 `datasets.save_to_disk()` 保存的本地 Dataset 目录：
 
 ```bash
-export OPENAI_API_KEY='your-api-key'
+export API_KEY='your-api-key'
 export BASE_URL='https://your-service.example.com/v1'
 export MODEL_ID='your-model-id'
 ```

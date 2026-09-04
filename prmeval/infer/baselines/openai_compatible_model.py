@@ -6,6 +6,7 @@ import sys
 import numpy as np
 from openai import OpenAI
 import time
+import os
 
 from ...core.config import InferConfig
 from ...core.registry import register_infer
@@ -32,19 +33,24 @@ class RemoteModel(Infer):
             raise ValueError("OpenAI-compatible inference requires infer.base_url")
         if not config.model_id:
             raise ValueError("OpenAI-compatible inference requires infer.model_id")
-        self.client = OpenAI(
-            api_key=config.api_key or "EMPTY",
-            base_url=normalize_api_base_url(config.base_url),
-        )
         self.config
-        self.model_id = config.model_id
+        self.model_id = config.model_id or os.getenv("MODEL_ID")
+        self.base_url = normalize_api_base_url(
+            config.base_url or os.getenv("BASE_URL")
+        )
+        self.api_key = config.api_key or os.getenv("API_KEY") or "EMPTY"
+            
+        self.client = OpenAI(
+            api_key=self.api_key,
+            base_url=self.base_url,
+        )
+        
 
     def gpt(
         self,
         task_description_i: str,
         frame_list: list[str],
         try_count_max: int = 3,
-        verbose: bool = True,
     ) -> tuple[list[int], list[str], list]:
         """Predict task progress for a single episode using GPT.
 
@@ -53,7 +59,6 @@ class RemoteModel(Infer):
             task_description_i: Description of the task.
             frame_list: List of base64-encoded image strings.
             try_count_max: Maximum number of retry attempts for API calls.
-            verbose: Whether to print detailed logs.
 
         Returns:
             progress_list: List of predicted progress percentages.
@@ -129,12 +134,12 @@ class RemoteModel(Infer):
                 else:
                     prompt_list.append("")
 
-            if verbose:
-                print("\n\n*******************************************************************************")
-                print(prompt_list[-1])
-                print("\n----------------- Response -----------------")
-                print(response_text_list[-1])
-                print(progress_list[-1])
+           
+            logger.debug("\n\n*******************************************************************************")
+            logger.debug(prompt_list[-1])
+            logger.debug("\n----------------- Response -----------------")
+            logger.debug(response_text_list[-1])
+            logger.debug(progress_list[-1])
 
         return progress_list, response_text_list, prompt_list
 
@@ -146,7 +151,7 @@ class RemoteModel(Infer):
 
         try:
             front_images = payload["front_images"]
-            tasks = payload["task"]
+            tasks = payload["tasks"]
 
             num_episodes, _ = count_images(front_images)
             processed_front_images = process_images(front_images)
@@ -159,7 +164,6 @@ class RemoteModel(Infer):
             results = []
             for episode_idx in range(num_episodes):
                 progress_list, response_text_list, prompt_list = self.gpt(
-                    self.client,
                     tasks[episode_idx],
                     encoded_front_images[episode_idx],
                 )
@@ -219,8 +223,6 @@ class RemoteModel(Infer):
             tasks=task_description,
             front_frames=frames_array,
             wrist_frames=None,
-            from_zero=self.from_zero,
-            temperature=self.temperature,
         )
         response = self.callback(payload)
         if response is None:

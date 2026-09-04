@@ -71,6 +71,8 @@ def _validate_number(field: str, value: Any, definition: dict[str, Any]) -> None
 
 
 def normalize_api_base_url(base_url: str) -> str:
-    """Return a versioned API base URL without duplicating the ``/v1`` suffix."""
-    normalized = base_url.rstrip("/")
-    return normalized if normalized.endswith("/v1") else f"{normalized}/v1"
+    """Normalize an API URL to end exactly with ``/v1``."""
+    normalized = base_url.strip().rstrip("/")
+    if "/v1" in normalized:
+        normalized = normalized.split("/v1", 1)[0]
+    return f"{normalized}/v1"
