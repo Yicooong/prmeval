@@ -9,14 +9,15 @@ uv run python dataset_unify/generate_hf_dataset.py \
 
 import collections
 from pathlib import Path
+
 import h5py
 import numpy as np
 from PIL import Image
 from torchvision import transforms
 from tqdm import tqdm
 
+from dataset_unify.dataset_loaders.mw_task_annotations import EVAL_GT_ANN, TRAIN_GT_ANN
 from dataset_unify.video_helpers import load_video_frames
-from dataset_unify.dataset_loaders.mw_task_annotations import TRAIN_GT_ANN, EVAL_GT_ANN
 
 
 def apply_center_crop_to_frames(frames: np.ndarray) -> np.ndarray:

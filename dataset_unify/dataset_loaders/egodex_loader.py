@@ -10,13 +10,13 @@ This module provides a simple, readable loader inspired by the LIBERO loader:
 
 import os
 from pathlib import Path
-from re import A
 
 import h5py
 import numpy as np
+from tqdm import tqdm
+
 from dataset_unify.helpers import generate_unique_id
 from dataset_unify.video_helpers import load_video_frames
-from tqdm import tqdm
 
 
 class EgoDexFrameLoader:
@@ -116,7 +116,7 @@ def load_egodex_dataset(dataset_path: str, max_trajectories: int = 100) -> dict[
     for hdf5_path, mp4_path, task_name in tqdm(traj_files, desc="Processing trajectories"):
         if max_trajectories is not None and loaded_count >= max_trajectories and max_trajectories != -1:
             break
-        pose_data, task_description = _load_hdf5_data(hdf5_path)
+        _pose_data, task_description = _load_hdf5_data(hdf5_path)
 
         if "description unavailable" in task_description.lower():
             print(f"Skipping task {hdf5_path} because description is: {task_description}")

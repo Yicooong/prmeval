@@ -5,13 +5,13 @@ from typing import Any
 
 import numpy as np
 from datasets import Dataset
+from tqdm import tqdm
 
 from dataset_unify.helpers import (
     create_hf_trajectory,
     generate_unique_id,
 )
 from dataset_unify.hf_schema import build_standard_dataset
-from tqdm import tqdm
 
 # Disable GPUs for TensorFlow in this loader to avoid CUDA context issues in workers
 os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
@@ -62,7 +62,7 @@ def _process_single_galaxea_episode(args):
     episode_entries = []
     first_step = next(episode)
     assert len(valid_img_keys) == 1, (
-        "Galaxea only has one valid image key for now. No support for multiple because of the way we iterate over the episode."
+        "Galaxea only has one valid image key for now. No support for multiple because of the way we iterate over the episode."  # noqa: E501
     )
     for img_key in valid_img_keys:
         # Validate key presence

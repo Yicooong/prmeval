@@ -1,9 +1,10 @@
 import json
 import os
+from collections.abc import Callable
 from difflib import SequenceMatcher
 from multiprocessing import cpu_count
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import cv2
 import numpy as np
@@ -137,7 +138,7 @@ def _process_human_episode(args):
         return None
 
     # Load metadata
-    with open(json_path, "r") as f:
+    with open(json_path) as f:
         metadata = json.load(f)
 
     instruction = metadata.get("notes", "")
@@ -195,7 +196,7 @@ def _process_robot_episode_from_lerobot(
             )
 
         assert len(frames) > 0, (
-            f"No frames found for episode {episode_idx} with preferred camera {preferred_camera} and instruction {task_instruction}"
+            f"No frames found for episode {episode_idx} with preferred camera {preferred_camera} and instruction {task_instruction}"  # noqa: E501
         )
 
         full_path, rel_path = _build_video_paths(output_dir, dataset_label, global_episode_idx, "robot")
@@ -292,15 +293,17 @@ def convert_usc_koch_human_robot_paired_to_hf(
                 if not json_path.exists():
                     continue
 
-                result = _process_human_episode((
-                    str(video_path),
-                    str(json_path),
-                    global_episode_idx,
-                    output_dir,
-                    dataset_name,
-                    max_frames,
-                    fps,
-                ))
+                result = _process_human_episode(
+                    (
+                        str(video_path),
+                        str(json_path),
+                        global_episode_idx,
+                        output_dir,
+                        dataset_name,
+                        max_frames,
+                        fps,
+                    )
+                )
                 if result:
                     human_entries.append(result)
                     global_episode_idx += 1
@@ -313,15 +316,17 @@ def convert_usc_koch_human_robot_paired_to_hf(
                 if not json_path.exists():
                     continue
 
-                args_list.append((
-                    str(video_path),
-                    str(json_path),
-                    global_episode_idx,
-                    output_dir,
-                    dataset_name,
-                    max_frames,
-                    fps,
-                ))
+                args_list.append(
+                    (
+                        str(video_path),
+                        str(json_path),
+                        global_episode_idx,
+                        output_dir,
+                        dataset_name,
+                        max_frames,
+                        fps,
+                    )
+                )
                 global_episode_idx += 1
 
             with Pool(processes=num_workers) as pool:

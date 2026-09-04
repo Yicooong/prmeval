@@ -10,15 +10,15 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from datasets import Dataset
 from PIL import Image
+from tqdm import tqdm
+
 from dataset_unify.helpers import (
     create_hf_trajectory,
     generate_unique_id,
 )
 from dataset_unify.hf_schema import build_standard_dataset
-from tqdm import tqdm
-from datasets import Dataset
-
 
 # Task mapping from task names to instructions
 TASK_TO_INSTRUCTION = {
@@ -54,7 +54,7 @@ def _load_annotation_files(dataset_path: Path) -> dict[str, dict[int, int]]:
             continue
 
         task_annotations = {}
-        with open(annot_file, "r") as f:
+        with open(annot_file) as f:
             for i, line in enumerate(f):
                 line = line.strip()
                 if not line:
@@ -94,7 +94,7 @@ def _load_episode_images(episode_dir: Path) -> list[Path]:
         name = path.stem  # e.g., "frame0000000"
         try:
             return int(name.replace("frame", ""))
-        except:
+        except ValueError:
             return 0
 
     image_files.sort(key=get_frame_num)
@@ -342,7 +342,7 @@ def convert_fino_net_dataset_to_hf(
                 zip(
                     [t for (t, _, _) in episode_batch],
                     [e for (_, e, _) in episode_batch],
-                    [l for (_, _, l) in episode_batch],
+                    [label for (_, _, label) in episode_batch],
                     [dataset_name] * len(episode_batch),
                     [output_dir] * len(episode_batch),
                     [max_frames] * len(episode_batch),

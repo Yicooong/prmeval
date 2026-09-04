@@ -13,7 +13,6 @@ from dataset_unify.helpers import (
 )
 from dataset_unify.hf_schema import build_standard_dataset
 
-
 # Task name to language instruction mapping
 TASK_INSTRUCTIONS = {
     "foldtowel": "Fold the towel in half",
@@ -216,10 +215,7 @@ def convert_new_mit_franka_dataset_to_hf(
         # Parallel processing
         from multiprocessing import Pool
 
-        args_list = [
-            (episode, output_dir, dataset_name, max_frames, fps)
-            for episode in all_episodes
-        ]
+        args_list = [(episode, output_dir, dataset_name, max_frames, fps) for episode in all_episodes]
 
         with Pool(processes=num_workers) as pool:
             results = list(

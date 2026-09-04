@@ -145,9 +145,10 @@ LIVING_ROOM_SCENE4_stack_the_right_bowl_on_the_left_bowl_and_place_them_in_the_t
 ```python
 # Check HDF5 file structure
 import h5py
-with h5py.File('path/to/file.hdf5', 'r') as f:
+
+with h5py.File("path/to/file.hdf5", "r") as f:
     print(list(f.keys()))  # Should show 'data'
-    print(list(f['data'].keys()))  # Should show trajectory keys
+    print(list(f["data"].keys()))  # Should show trajectory keys
 ```
 
 ### Missing Observations

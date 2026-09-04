@@ -263,7 +263,7 @@ def create_trajectory_video_optimized(
         print(f"Error: {stderr}")
         raise RuntimeError("FFmpeg process failed to start")
 
-    for i, frame in enumerate(processed_frames):
+    for _i, frame in enumerate(processed_frames):
         # Ensure frame is in uint8 format
         if frame.dtype != np.uint8:
             frame = (frame * 255).astype(np.uint8)
@@ -287,7 +287,7 @@ def create_trajectory_video_optimized(
             stderr = process.stderr.read().decode()
             print(f"BrokenPipeError writing frame. FFmpeg stderr: {stderr}")
             print(f"Frame shape: {frame.shape}, dtype: {frame.dtype}")
-            raise RuntimeError(f"Failed to write frame to FFmpeg: {e}")
+            raise RuntimeError(f"Failed to write frame to FFmpeg: {e}") from e
 
     # Close the pipe and finish the process
     process.stdin.close()

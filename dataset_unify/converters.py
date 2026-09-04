@@ -152,22 +152,16 @@ _register_direct_converter(
         "center_crop": cfg.output.center_crop,
     },
 )
-_register_trajectory_converter(
-    "roboarena", "dataset_unify.dataset_loaders.roboarena_loader", "load_roboarena_dataset"
-)
+_register_trajectory_converter("roboarena", "dataset_unify.dataset_loaders.roboarena_loader", "load_roboarena_dataset")
 _register_trajectory_converter("ph2d", "dataset_unify.dataset_loaders.ph2d_loader", "load_ph2d_dataset")
-_register_direct_converter(
-    "galaxea", "dataset_unify.dataset_loaders.galaxea_loader", "convert_galaxea_dataset_to_hf"
-)
+_register_direct_converter("galaxea", "dataset_unify.dataset_loaders.galaxea_loader", "convert_galaxea_dataset_to_hf")
 _register_direct_converter(
     "molmoact",
     "dataset_unify.dataset_loaders.molmoact_loader",
     "convert_molmoact_dataset_to_hf",
     include_num_workers=False,
 )
-_register_trajectory_converter(
-    "auto_eval", "dataset_unify.dataset_loaders.autoeval_loader", "load_autoeval_dataset"
-)
+_register_trajectory_converter("auto_eval", "dataset_unify.dataset_loaders.autoeval_loader", "load_autoeval_dataset")
 _register_trajectory_converter(
     "usc_xarm_policy_ranking",
     "dataset_unify.dataset_loaders.usc_xarm_policy_ranking_loader",
@@ -261,9 +255,7 @@ _register_direct_converter(
     "convert_humanoid_everyday_dataset_to_hf",
 )
 _register_trajectory_converter("motif", "dataset_unify.dataset_loaders.motif_loader", "load_motif_dataset")
-_register_trajectory_converter(
-    "failsafe", "dataset_unify.dataset_loaders.failsafe_loader", "load_failsafe_dataset"
-)
+_register_trajectory_converter("failsafe", "dataset_unify.dataset_loaders.failsafe_loader", "load_failsafe_dataset")
 _register_trajectory_converter(
     "racer",
     "dataset_unify.dataset_loaders.racer_loader",

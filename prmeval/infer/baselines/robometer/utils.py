@@ -1,29 +1,25 @@
-
-import torch
-from .configs import ExperimentConfig
-from typing import Any, Optional
-from pathlib import Path
-import logging
-import yaml
-from dataclasses import fields, dataclass
 import json
-from safetensors.torch import load_file
+import logging
+from dataclasses import dataclass, fields
+from pathlib import Path
+from typing import Any
+
 import numpy as np
+import torch
+import yaml
 from PIL import Image
+from safetensors.torch import load_file
+from transformers import AutoModelForImageTextToText, AutoProcessor, BitsAndBytesConfig, Qwen3VLModel
 
 from .configs import (
     ExperimentConfig,
     ModelConfig,
     PEFTConfig,
 )
-from transformers import (
-    AutoModelForImageTextToText,
-    AutoProcessor,
-    BitsAndBytesConfig,
-    Qwen3VLModel
-)
 from .rbm import RBM
+
 logger = logging.getLogger(__name__)
+
 
 def convert_bins_to_continuous(bin_logits: torch.Tensor | np.ndarray) -> torch.Tensor | np.ndarray:
     """Convert discrete bins to continuous progress values in [0, 1] via weighted sum of bin centers."""
@@ -50,6 +46,8 @@ def convert_bins_to_continuous(bin_logits: torch.Tensor | np.ndarray) -> torch.T
 
 MAX_IMAGE_SIDE = 480  # bigger side
 MAX_IMAGE_PIXELS = 1024 * 1024  # safety cap (1.0 MP). raise to 1.5MP if stable
+
+
 def _resize_pil(pil: Image.Image, max_side: int = MAX_IMAGE_SIDE, max_pixels: int = MAX_IMAGE_PIXELS) -> Image.Image:
     pil = pil.convert("RGB")
     w, h = pil.size
@@ -68,6 +66,7 @@ def _resize_pil(pil: Image.Image, max_side: int = MAX_IMAGE_SIDE, max_pixels: in
 
     return pil
 
+
 @dataclass
 class ModelOutput:
     pref_logits: torch.Tensor | None = None
@@ -75,6 +74,7 @@ class ModelOutput:
     progress_logits: torch.Tensor | None = None
 
     hidden_states: torch.Tensor | None = None
+
 
 def convert_frames_to_pil_images(frames, frames_shape=None):
     """Convert frames to PIL images if they are numpy arrays or serialized bytes.
@@ -156,8 +156,7 @@ def convert_frames_to_pil_images(frames, frames_shape=None):
                     continue
         return pil_images
 
-    raise ValueError(f"Unsupported frames type: {type(frames)}") 
-
+    raise ValueError(f"Unsupported frames type: {type(frames)}")
 
 
 def _get_checkpoint_safetensors_files(checkpoint_path: Path, prefer_model_shards: bool = False) -> list[Path]:
@@ -398,10 +397,7 @@ def _load_checkpoint_weights_from_safetensors(
     try:
         missing_keys, unexpected_keys = model.load_state_dict(remapped_state_dict, strict=False)
     except Exception as e:
-        logger.error(
-            "load_state_dict failed",
-            exc_info=True
-        )
+        logger.error("load_state_dict failed", exc_info=True)
         raise e
 
     # Filter missing keys - base model keys are expected for PEFT checkpoints
@@ -520,10 +516,12 @@ def _load_checkpoint_weights_from_safetensors(
         logger.error("Adapter weights did not load correctly!")
     logger.info(f"Successfully loaded checkpoint weights from {checkpoint_path}")
 
+
 def _checkpoint_has_full_model_shards(checkpoint_path: str) -> bool:
     """Whether a checkpoint directory contains self-contained model safetensors shards."""
     path = Path(checkpoint_path)
     return (path / "model.safetensors.index.json").exists() or any(path.glob("model*.safetensors"))
+
 
 def _setup_processor_and_tokenizer(cfg: ModelConfig) -> AutoProcessor:
     """
@@ -562,11 +560,12 @@ def _setup_processor_and_tokenizer(cfg: ModelConfig) -> AutoProcessor:
 
     return processor
 
+
 def _load_base_model_standard(
     cfg: ModelConfig,
     torch_dtype: torch.dtype,
     extra_kwargs: dict,
-    bnb: Optional[BitsAndBytesConfig],
+    bnb: BitsAndBytesConfig | None,
 ) -> Any:
     """
     Load base model using standard transformers loading.
@@ -582,7 +581,7 @@ def _load_base_model_standard(
     """
     # Check if it's Molmo, Qwen3 or Qwen2/2.5
     is_molmo = "Molmo" in cfg.base_model_id
-    is_qwen3 = ("Qwen3" in cfg.base_model_id or "qwen3" in cfg.base_model_id.lower()) 
+    is_qwen3 = "Qwen3" in cfg.base_model_id or "qwen3" in cfg.base_model_id.lower()
 
     # Select appropriate model classes based on version and model type
     if is_molmo:
@@ -600,16 +599,12 @@ def _load_base_model_standard(
     else:
         qwen_model_cls = Qwen3VLModel
         base_model = qwen_model_cls.from_pretrained(
-            cfg.base_model_id,
-            torch_dtype=torch_dtype,
-            **extra_kwargs,
-            quantization_config=bnb,
-            device_map="auto"
+            cfg.base_model_id, torch_dtype=torch_dtype, **extra_kwargs, quantization_config=bnb, device_map="auto"
         )
         logger.info("Using Qwen3 models")
 
-
     return base_model
+
 
 def _add_special_tokens_and_resize(cfg: ModelConfig, processor: AutoProcessor, base_model: Any) -> None:
     """
@@ -694,7 +689,7 @@ def setup_model_and_processor(
 
     # Determine if we're loading from a checkpoint and inspect any PEFT artifacts/weights.
     loading_from_checkpoint = bool(hf_model_id)
-    checkpoint_path_for_load: Optional[str] = None
+    checkpoint_path_for_load: str | None = None
     checkpoint_peft_info = {
         "has_adapter_files": False,
         "has_adapter_weights": False,
@@ -742,7 +737,6 @@ def setup_model_and_processor(
             model_cls = RBM
 
         elif "Qwen" in cfg.base_model_id or "Molmo" in cfg.base_model_id:
-           
             base_model = _load_base_model_standard(cfg, torch_dtype, extra_kwargs, bnb)
             tokenizer = None  # Will be loaded with processor
 
@@ -806,7 +800,6 @@ def setup_model_and_processor(
             repo_id, revision_to_load = hf_model_id, None
             checkpoint_path = checkpoint_path_for_load
             if checkpoint_path is None:
-              
                 checkpoint_path = hf_model_id
             if checkpoint_path is None:
                 raise ValueError(f"Could not resolve checkpoint path: {hf_model_id}")
@@ -1045,10 +1038,9 @@ def setup_model_and_processor(
     return tokenizer, processor, model
 
 
-
 def load_model_from_hf(
     model_path: str,
-    base_model_path: str, 
+    base_model_path: str,
     device: torch.device,
 ) -> tuple[ExperimentConfig | None, Any | None, Any | None, Any | None]:
     """
@@ -1102,9 +1094,7 @@ def load_model_from_hf(
             try:
                 from huggingface_hub import hf_hub_download
             except ImportError as e:
-                raise ImportError(
-                    "huggingface_hub not available. Install with: pip install huggingface_hub"
-                ) from e
+                raise ImportError("huggingface_hub not available. Install with: pip install huggingface_hub") from e
 
             # Check if this is a HuggingFace repo (not a local path)
             if "/" in repo_id and not repo_id.startswith("/"):
@@ -1112,15 +1102,11 @@ def load_model_from_hf(
                     f"config.yaml not found locally, downloading from HuggingFace Hub: {repo_id}@{revision or 'latest'}"
                 )
                 try:
-                    config_path = hf_hub_download(
-                        repo_id=repo_id, filename="config.yaml", revision=revision
-                    )
+                    config_path = hf_hub_download(repo_id=repo_id, filename="config.yaml", revision=revision)
                     logger.info(f"Downloaded config.yaml to: {config_path}")
                 except Exception as e:
                     logger.warning(f"Could not download config.yaml from Hub: {e}")
-                    raise ValueError(
-                        f"config.yaml not found locally and could not be downloaded from Hub: {e}"
-                    ) from e
+                    raise ValueError(f"config.yaml not found locally and could not be downloaded from Hub: {e}") from e
             else:
                 raise ValueError(f"config.yaml not found in checkpoint directory or parent directory: {resolved_path}")
     else:

@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 from __future__ import annotations
+
 import pickle
 from collections import defaultdict
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
-import numpy as np
 import cv2
+import numpy as np
 
 from dataset_unify.helpers import generate_unique_id
 
@@ -136,7 +137,7 @@ def load_usc_xarm_policy_ranking_dataset(
         if limit is not None and total >= limit:
             break
 
-        task_key, optimality_key, attempt_id = _parse_folder_metadata(folder.name)
+        task_key, optimality_key, _attempt_id = _parse_folder_metadata(folder.name)
         if optimality_key not in QUALITY_LABEL_MAP:
             raise ValueError(f"Unknown optimality label '{optimality_key}' in folder {folder.name}")
 

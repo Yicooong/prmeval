@@ -149,10 +149,10 @@ EgoDex includes rich 3D pose annotations that are used as action data:
 # T = number of frames
 # D = concatenated pose dimensions (typically 6-15D)
 actions = [
-    left_hand_pos,      # (T, 3)
-    right_hand_pos,     # (T, 3) 
-    finger_tips,        # (T, 6) - both hands
-    camera_pose         # (T, 3) - optional
+    left_hand_pos,  # (T, 3)
+    right_hand_pos,  # (T, 3)
+    finger_tips,  # (T, 6) - both hands
+    camera_pose,  # (T, 3) - optional
 ]
 ```
 
@@ -187,16 +187,13 @@ The EgoDex loader uses an iterator pattern for memory efficiency:
 from egodex_loader import get_egodex_iterator
 
 # Create iterator
-iterator = get_egodex_iterator(
-    dataset_path="/path/to/egodex/test",
-    max_trajectories=100
-)
+iterator = get_egodex_iterator(dataset_path="/path/to/egodex/test", max_trajectories=100)
 
 # Process one trajectory at a time
 for trajectory in iterator:
-    frames = trajectory['frames']      # Video frames
-    actions = trajectory['actions']    # Pose data
-    task = trajectory['task']         # Task description
+    frames = trajectory["frames"]  # Video frames
+    actions = trajectory["actions"]  # Pose data
+    task = trajectory["task"]  # Task description
     # Process trajectory...
 ```
 

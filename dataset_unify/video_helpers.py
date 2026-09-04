@@ -10,8 +10,6 @@ import shutil
 import subprocess
 import tempfile
 import time
-from signal import SIGTERM
-from typing import Optional
 
 import cv2
 import numpy as np
@@ -121,7 +119,7 @@ def _open_with_best_backend(path: str) -> cv2.VideoCapture | None:
 
 def load_video_frames(
     video_input,
-    timeout: Optional[int] = DEFAULT_FRAME_READ_TIMEOUT,
+    timeout: int | None = DEFAULT_FRAME_READ_TIMEOUT,
     max_frames: int = MAX_FRAMES_SANITY_CHECK,
 ) -> np.ndarray:
     """Load video frames (RGB uint8) from a file path (str/Path) or video bytes.

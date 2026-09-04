@@ -1,12 +1,14 @@
 import os
+from collections.abc import Callable
 from multiprocessing import cpu_count
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 from uuid import uuid4
 
 import numpy as np
 import pandas as pd
 from datasets import Dataset
+
 from dataset_unify.helpers import create_hf_trajectory
 from dataset_unify.hf_schema import build_standard_dataset
 

@@ -11,7 +11,7 @@ Paper: TOPReward: Token Probabilities as Hidden Zero-Shot Rewards for Robotics (
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, ClassVar, List
+from typing import Any, ClassVar
 
 import numpy as np
 from PIL import Image
@@ -145,15 +145,11 @@ class TopReward(Infer):
         self.processor = AutoProcessor.from_pretrained(model_path, padding_side="left", trust_remote_code=True)
 
     def _compute_instruction_reward(
-        self,
-        frames: list[Image.Image],
-        instruction: str,
-        prefix_length: list[int]
+        self, frames: list[Image.Image], instruction: str, prefix_length: list[int]
     ) -> list[float]:
         """Compute log-likelihood reward for instruction given video (single trajectory)."""
         prompt_text = "The above video shows a robot manipulation trajectory that completes the following task: "
         eos_token = self.processor.tokenizer.eos_token
-
 
         full_texts = []
         templated_messages = []
@@ -175,9 +171,11 @@ class TopReward(Infer):
                 full_text = f"{prompt_chat}True"
                 templated_messages.append(templated_message)
                 full_texts.append(full_text)
-                
+
             else:
-                instruction_suffix = f"{instruction} Decide whether the above statement is True or not. The answer is: True"
+                instruction_suffix = (
+                    f"{instruction} Decide whether the above statement is True or not. The answer is: True"
+                )
                 user_message = [
                     {
                         "role": "user",
@@ -187,7 +185,9 @@ class TopReward(Infer):
                         ],
                     }
                 ]
-                prompt_chat = self.processor.apply_chat_template(user_message, tokenize=False, add_generation_prompt=False)
+                prompt_chat = self.processor.apply_chat_template(
+                    user_message, tokenize=False, add_generation_prompt=False
+                )
                 if eos_token:
                     prompt_chat = prompt_chat.split(eos_token)[0]
                 full_text = f"{prompt_chat}{instruction_suffix}"
@@ -195,8 +195,6 @@ class TopReward(Infer):
                 full_texts.append(full_text)
 
         image_inputs, video_inputs = process_vision_info(templated_messages)
-            
-            
 
         inputs = self.processor(
             text=full_texts,
@@ -205,7 +203,6 @@ class TopReward(Infer):
             padding=True,
             return_tensors="pt",
         )
-
 
         inputs = inputs.to(self.model.device)
         labels = inputs["input_ids"].clone()
@@ -256,9 +253,8 @@ class TopReward(Infer):
         else:
             prefix_lengths = [num_frames]
 
-       
         rewards = self._compute_instruction_reward(frames, instruction, prefix_lengths)
-            
+
         normalized = _normalize_rewards(rewards).tolist()
         return _InstructionRewardResult(
             reward=rewards[-1],
@@ -310,7 +306,7 @@ class TopReward(Infer):
         progress = np.interp(frame_indices, lengths, values)
         return np.clip(progress.astype(np.float64), 0.0, 1.0)
 
-    def predict(self, samples: List[EvaluationSample]) -> List[Prediction]:
+    def predict(self, samples: list[EvaluationSample]) -> list[Prediction]:
         result = []
         for sample in samples:
             if not isinstance(sample, ProgressSample):
@@ -338,5 +334,5 @@ class TopReward(Infer):
                     model=self.config.model_id or self.config.model_path or self.config.name,
                     model_version=self.config.model_version,
                 )
-        )
+            )
         return result

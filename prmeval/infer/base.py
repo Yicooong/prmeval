@@ -6,7 +6,7 @@ import json
 import re
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, ClassVar, List
+from typing import Any, ClassVar
 
 import numpy as np
 
@@ -65,7 +65,7 @@ class Infer(ABC):
         return 1
 
     @abstractmethod
-    def predict(self, samples: List[EvaluationSample]) -> List[Prediction]:
+    def predict(self, samples: list[EvaluationSample]) -> list[Prediction]:
         raise NotImplementedError
 
     def model_info(self) -> dict[str, Any]:

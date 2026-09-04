@@ -161,7 +161,7 @@ def convert_utd_so101_clean_policy_ranking_to_hf(
             print(f"Warning: vla_task.json not found in {data_dir}, skipping")
             continue
 
-        with open(vla_task_path, "r") as f:
+        with open(vla_task_path) as f:
             instructions = json.load(f)
 
         # Find all episode GIFs for the specified view
@@ -184,13 +184,15 @@ def convert_utd_so101_clean_policy_ranking_to_hf(
 
             instruction = instructions[episode_num]
 
-            all_episodes.append({
-                "gif_path": str(gif_file),
-                "episode_idx": global_episode_idx,
-                "instruction": instruction,
-                "quality_label": quality_label,
-                "view": view,
-            })
+            all_episodes.append(
+                {
+                    "gif_path": str(gif_file),
+                    "episode_idx": global_episode_idx,
+                    "instruction": instruction,
+                    "quality_label": quality_label,
+                    "view": view,
+                }
+            )
             global_episode_idx += 1
 
     print(f"Total episodes to process: {len(all_episodes)}")
@@ -200,17 +202,19 @@ def convert_utd_so101_clean_policy_ranking_to_hf(
     if num_workers == 1:
         # Sequential processing
         for episode in tqdm(all_episodes, desc=f"Processing {view} episodes"):
-            result = _process_episode((
-                episode["gif_path"],
-                episode["episode_idx"],
-                episode["instruction"],
-                episode["quality_label"],
-                episode["view"],
-                output_dir,
-                dataset_name,
-                max_frames,
-                fps,
-            ))
+            result = _process_episode(
+                (
+                    episode["gif_path"],
+                    episode["episode_idx"],
+                    episode["instruction"],
+                    episode["quality_label"],
+                    episode["view"],
+                    output_dir,
+                    dataset_name,
+                    max_frames,
+                    fps,
+                )
+            )
             if result:
                 entries.append(result)
     else:

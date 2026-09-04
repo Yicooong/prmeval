@@ -143,10 +143,7 @@ def vlm_batch_decode(
                     }
                 ]
 
-                prompts_text = [
-                    maybe_apply_chat_template(example, processing_class)["prompt"]
-                    for example in inputs
-                ]
+                prompts_text = [maybe_apply_chat_template(example, processing_class)["prompt"] for example in inputs]
 
                 images = [x["image"] for x in inputs]
 
@@ -159,9 +156,7 @@ def vlm_batch_decode(
                         + replace_start
                         + prev_answer
                         + replace_end
-                        + prompts_text[0]
-                        .split(replace_start)[1]
-                        .split(replace_end)[1]
+                        + prompts_text[0].split(replace_start)[1].split(replace_end)[1]
                     )
 
                 current_batch_prompts.append(prompts_text[0])
@@ -194,8 +189,7 @@ def vlm_batch_decode(
 
         if outputs.shape[0] != len(current_batch_prompts):
             raise RuntimeError(
-                f"Outputs length {outputs.shape[0]} is not equal to inputs length "
-                f"{len(current_batch_prompts)}"
+                f"Outputs length {outputs.shape[0]} is not equal to inputs length {len(current_batch_prompts)}"
             )
 
         # Decoder-only Transformers models return prompt + completion. Decode only
@@ -204,20 +198,16 @@ def vlm_batch_decode(
 
         text_output = processor.batch_decode(completion_ids, skip_special_tokens=True)
 
-        text_output_list_batch = text_output_list_batch + [
-            assemble_output_batch(text_output, current_indices, video_count)
+        text_output_list_batch = [
+            *text_output_list_batch,
+            assemble_output_batch(text_output, current_indices, video_count),
         ]
 
-        text_input_list_batch = text_input_list_batch + [
-            assemble_output_batch(
-                current_batch_prompts,
-                current_indices,
-                video_count,
-            )
+        text_input_list_batch = [
+            *text_input_list_batch,
+            assemble_output_batch(current_batch_prompts, current_indices, video_count),
         ]
-        current_answers = [
-            get_answer_from_completion(text_output_i) for text_output_i in text_output
-        ]
+        current_answers = [get_answer_from_completion(text_output_i) for text_output_i in text_output]
         current_answer_batch = assemble_output_batch(
             current_answers,
             current_indices,

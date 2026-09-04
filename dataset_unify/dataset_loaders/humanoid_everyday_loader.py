@@ -9,18 +9,18 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from datasets import Dataset
+from tqdm import tqdm
 
 from dataset_unify.helpers import (
     create_hf_trajectory,
     generate_unique_id,
 )
 from dataset_unify.hf_schema import build_standard_dataset
-from tqdm import tqdm
 
 # Disable GPUs for TensorFlow in this loader to avoid CUDA context issues in workers
 os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
 
-to_skip = set(["pull_out_tissue_from_tissue_box_h1.zip"])  # skip because it's incorrect videos
+to_skip = {"pull_out_tissue_from_tissue_box_h1.zip"}  # skip because it's incorrect videos
 
 # Google Sheet with task descriptions
 GOOGLE_SHEET_URL = "https://docs.google.com/spreadsheets/d/158Wzf8Xywky3aHJSCfp3OZxf4bkhzAJdcG94eHf8gVc/export?format=csv&gid=1307250382"
@@ -79,7 +79,7 @@ def _build_humanoid_video_paths(
     task_prefix = zip_file.split("/")[-2]
     episode_dir = os.path.join(output_dir, dataset_label.lower(), task_prefix, shard_dir, f"episode_{episode_idx:06d}")
     os.makedirs(episode_dir, exist_ok=True)
-    full_path = os.path.join(episode_dir, f"clip.mp4")
+    full_path = os.path.join(episode_dir, "clip.mp4")
     rel_path = os.path.join(task_prefix, shard_dir, f"episode_{episode_idx:06d}", "clip.mp4")
     return full_path, rel_path
 
@@ -157,7 +157,7 @@ def _create_humanoid_dataloader(zip_path: str):
         return ds
 
     except ImportError:
-        print(f"Warning: humanoid_everyday package not found. Please install it with: pip install humanoid_everyday")
+        print("Warning: humanoid_everyday package not found. Please install it with: pip install humanoid_everyday")
         return None
     except Exception as e:
         print(f"Warning: Failed to create dataloader from {zip_path}: {e}")
@@ -262,7 +262,7 @@ def convert_humanoid_everyday_dataset_to_hf(
 
                 else:
                     metadata_path = metadata_paths[0]
-                    with open(metadata_path, "r") as f:
+                    with open(metadata_path) as f:
                         metadata = json.load(f)
                     task_name = metadata["description"]
                     print(f"Found task description from metadata.json: {task_name}")
@@ -289,16 +289,18 @@ def convert_humanoid_everyday_dataset_to_hf(
                 continue
 
             # Process single episode
-            episode_entries = _process_single_humanoid_episode((
-                episode_data,
-                ep_idx,
-                task_name,
-                output_dir,
-                dataset_name,
-                max_frames,
-                fps,
-                zip_file,
-            ))
+            episode_entries = _process_single_humanoid_episode(
+                (
+                    episode_data,
+                    ep_idx,
+                    task_name,
+                    output_dir,
+                    dataset_name,
+                    max_frames,
+                    fps,
+                    zip_file,
+                )
+            )
 
             all_entries.extend(episode_entries)
             produced += len(episode_entries)

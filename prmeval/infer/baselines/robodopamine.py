@@ -258,7 +258,7 @@ class GRMInference:
 
         try:
             import torch
-            from transformers import Qwen3VLForConditionalGeneration, AutoProcessor
+            from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
         except ImportError as exc:
             raise RuntimeError("RoboDopamine requires torch and transformers with multimodal model support") from exc
 

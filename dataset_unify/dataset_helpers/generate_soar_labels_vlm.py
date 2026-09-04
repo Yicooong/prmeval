@@ -23,7 +23,7 @@ Usage:
 
     # Resume from checkpoint
     python generate_soar_labels_vlm.py --dataset_path /path/to/soar/rlds --output labels.json --resume_from labels_checkpoint.json
-"""
+"""  # noqa: E501
 
 # CRITICAL: Configure TensorFlow for CPU-only BEFORE any imports
 # This prevents TensorFlow from allocating GPU memory
@@ -199,7 +199,7 @@ Watch the video and answer:
 Format your response EXACTLY as:
 Context: Your explanation of the video and the decision.
 Decision: SUCCESS or FAILURE
-Confidence: 0.X"""
+Confidence: 0.X"""  # noqa: E501
 
         # Prepare the message with video frames
         messages = [
@@ -221,7 +221,7 @@ Confidence: 0.X"""
 
         # split the videos and according metadatas
         if video_inputs is not None:
-            videos, video_metadatas = zip(*video_inputs)
+            videos, video_metadatas = zip(*video_inputs, strict=False)
             videos, video_metadatas = list(videos), list(video_metadatas)
         else:
             video_metadatas = None
@@ -247,7 +247,9 @@ Confidence: 0.X"""
             )
 
         # Trim input tokens
-        generated_ids_trimmed = [out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)]
+        generated_ids_trimmed = [
+            out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, generated_ids, strict=False)
+        ]
 
         response = self.processor.batch_decode(
             generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
@@ -311,7 +313,7 @@ Confidence: 0.X"""
                 confidence = 0.6
             else:
                 if self.verbose:
-                    print(f"[DEBUG] Could not determine prediction from response")
+                    print("[DEBUG] Could not determine prediction from response")
 
         if self.verbose:
             print(f"[DEBUG] Parsed: prediction={prediction}, confidence={confidence}\n")
@@ -349,7 +351,7 @@ def get_dataset_splits(dataset_path: str) -> dict[str, Any]:
             info = builder.info.splits[split_name]
             num_episodes = info.num_examples
             print(f"Found {num_episodes} episodes in '{split_name}' split")
-        except:
+        except Exception:
             print(f"Found '{split_name}' split (episode count unknown)")
     except Exception as e:
         print(f"Warning: Could not load '{split_name}' split: {e}")
@@ -428,7 +430,7 @@ def main():
 
     if args.resume_from and os.path.exists(args.resume_from):
         print(f"\nResuming from checkpoint: {args.resume_from}")
-        with open(args.resume_from, "r") as f:
+        with open(args.resume_from) as f:
             checkpoint_data = json.load(f)
             results = checkpoint_data.get("results", [])
             # Track which episodes we've already processed
@@ -439,7 +441,7 @@ def main():
 
     # Get dataset splits (streaming, no loading into memory)
     print(f"\nAccessing SOAR dataset from: {args.dataset_path}")
-    dataset_dict, builder = get_dataset_splits(args.dataset_path)
+    dataset_dict, _builder = get_dataset_splits(args.dataset_path)
 
     if all(ds is None for ds in dataset_dict.values()):
         print("Error: No splits found in dataset!")

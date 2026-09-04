@@ -19,7 +19,7 @@ import shutil
 import tempfile
 import uuid
 from pathlib import Path
-from typing import ClassVar, List
+from typing import ClassVar
 
 import numpy as np
 from PIL import Image
@@ -126,7 +126,7 @@ class RoboReward(Infer):
             model_path=config.model_path,
             max_new_tokens=int(options.get("max_new_tokens", 128)),
             use_unsloth=bool(options.get("use_unsloth", False)),
-            use_prefix_samples=bool(options.get("use_prefix_samples", False))
+            use_prefix_samples=bool(options.get("use_prefix_samples", False)),
         )
 
     capabilities: ClassVar[set[str]] = {"progress"}
@@ -137,7 +137,7 @@ class RoboReward(Infer):
         model_path: str = "teetone/RoboReward-8B",
         max_new_tokens: int = 128,
         use_unsloth: bool = False,
-        use_prefix_samples: bool = False
+        use_prefix_samples: bool = False,
     ):
         """
         Initialize RoboReward model.
@@ -262,7 +262,7 @@ Task: {task_description}"""
             List of discrete scores (1.0-5.0) for each frame.
             All frames get the same discrete score (end-of-episode score for this subsequence).
         """
-   
+
         if frames_array is None or frames_array.size == 0:
             return []
 
@@ -280,7 +280,7 @@ Task: {task_description}"""
             # Duplicate the single frame to make it 2 frames
             frames_pil = [frames_pil[0], frames_pil[0]]
             num_frames = 2
-    
+
         if self.use_prefix_samples and num_frames > 2:
             num_samples = num_frames
             prefix_lengths = np.linspace(1, num_frames, num_samples, dtype=int)
@@ -289,7 +289,6 @@ Task: {task_description}"""
             prefix_lengths = [num_frames]
 
         # Ensure at least 2 frames for video processing (qwen_vl_utils requires minimum 2 frames)
-        
 
         # Build prompt
         prompt = self._build_prompt(task_description)
@@ -311,7 +310,6 @@ Task: {task_description}"""
         logger.info(f"RoboReward: Saved {len(frame_paths)} frames as JPEG files in {tmpdir}")
 
         for length in prefix_lengths:
-
             # Build message with frames as list of file paths (following Qwen3-VL pattern)
             message = [
                 {
@@ -392,13 +390,12 @@ Task: {task_description}"""
         values = np.array(result, dtype=np.float64)
         frame_indices = np.arange(1, num_frames + 1, dtype=np.float64)
         progress = np.interp(frame_indices, lengths, values)
-        
+
         # Clean up temporary directory
         shutil.rmtree(tmpdir, ignore_errors=True)
 
         return np.clip(progress.astype(np.float64), 0.0, 1.0).tolist()
 
-  
     def compute_progress_with_prefix(
         self,
         frames_array: np.ndarray,
@@ -420,7 +417,7 @@ Task: {task_description}"""
             List of discrete scores (1.0-5.0) for each frame.
             All frames get the same discrete score (end-of-episode score for this subsequence).
         """
-   
+
         if frames_array is None or frames_array.size == 0:
             return []
 
@@ -437,7 +434,7 @@ Task: {task_description}"""
             # Duplicate the single frame to make it 2 frames
             frames_pil = [frames_pil[0], frames_pil[0]]
             num_frames = 2
-    
+
         if self.use_prefix_samples and num_frames > 2:
             num_samples = num_frames
             prefix_lengths = np.linspace(1, num_frames, num_samples, dtype=int)
@@ -446,7 +443,6 @@ Task: {task_description}"""
             prefix_lengths = [num_frames]
 
         # Ensure at least 2 frames for video processing (qwen_vl_utils requires minimum 2 frames)
-        
 
         # Build prompt
         prompt = self._build_prompt(task_description)
@@ -469,7 +465,6 @@ Task: {task_description}"""
 
         all_message = []
         for length in prefix_lengths:
-
             # Build message with frames as list of file paths (following Qwen3-VL pattern)
             message = [
                 {
@@ -534,14 +529,11 @@ Task: {task_description}"""
         )
 
         # Parse score
-        
+
         discrete_score = [self._parse_score(output_text) for output_text in output_texts]
         logger.info(f"RoboReward: Discrete score: {discrete_score}")
 
-        discrete_score = [
-            1 if x is None else x 
-            for x in discrete_score
-        ]
+        discrete_score = [1 if x is None else x for x in discrete_score]
 
         # Return same discrete score for all frames in this subsequence
         # Use original num_frames from frames_array (before duplication)
@@ -550,14 +542,13 @@ Task: {task_description}"""
         # because RoboReward returns a score between 1 and 5, we need to normalize it to 0-1
         # result = [float(discrete_score) / 4.0 - 0.25] * original_num_frames
         result = [float(_discrete_score) / 4.0 - 0.25 for _discrete_score in discrete_score]
-        
+
         # Clean up temporary directory
         shutil.rmtree(tmpdir, ignore_errors=True)
 
         return result
 
-  
-    def predict(self, samples: List[EvaluationSample]) -> List[Prediction]:
+    def predict(self, samples: list[EvaluationSample]) -> list[Prediction]:
         result = []
         for sample in samples:
             if not isinstance(sample, ProgressSample):

@@ -2,20 +2,19 @@
 
 import base64
 import io
+import json
 import logging
 import re
+from pathlib import Path
+
 import cv2
+import matplotlib
 import numpy as np
 import torch
 from PIL import Image
+
 from .constants import QUESTION_TEMPLATE, SYSTEM_PROMPT_TEMPLATE
-import json
-from pathlib import Path
 
-
-
-
-import matplotlib
 matplotlib.use("Agg")  # Set non-interactive backend for headless rendering
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
@@ -26,6 +25,7 @@ NUMPY_EXTENSIONS = {".npy", ".npz"}
 
 FRONT_ALIASES = {"agentview", "front", "rgb", "external"}
 WRIST_ALIASES = {"wristview", "wrist", "hand"}
+
 
 def resize_with_padding(img: np.ndarray, size: int = 384) -> np.ndarray:
     """Aspect ratio preserving image resize with padding.
@@ -137,21 +137,17 @@ def count_images(images: list[list]) -> tuple[int, list[int]]:
     return num_episodes, episode_lengths
 
 
-def count_and_validate_images(
-    front_images: list[list], wrist_images: list[list]
-) -> tuple[int, list[int]]:
+def count_and_validate_images(front_images: list[list], wrist_images: list[list]) -> tuple[int, list[int]]:
     """Count images and validate consistent episode counts and lengths."""
-    assert len(front_images) == len(
-        wrist_images
-    ), f"Length mismatch: {len(front_images)} vs {len(wrist_images)}"
+    assert len(front_images) == len(wrist_images), f"Length mismatch: {len(front_images)} vs {len(wrist_images)}"
     num_episodes = len(front_images)
     episode_lengths = []
     for epi_idx in range(num_episodes):
         front_imgs = front_images[epi_idx]
         wrist_imgs = wrist_images[epi_idx]
-        assert len(front_imgs) == len(
-            wrist_imgs
-        ), f"Length mismatch in episode {epi_idx}: {len(front_imgs)} vs {len(wrist_imgs)}"
+        assert len(front_imgs) == len(wrist_imgs), (
+            f"Length mismatch in episode {epi_idx}: {len(front_imgs)} vs {len(wrist_imgs)}"
+        )
         episode_lengths.append(len(front_imgs))
     return num_episodes, episode_lengths
 
@@ -210,9 +206,7 @@ def decode_and_validate_image(image: np.ndarray | torch.Tensor | bytes) -> np.nd
         1,
         3,
     ], f"Image must have 1 or 3 channels, got shape {image.shape}."
-    assert (
-        image.dtype == np.uint8
-    ), f"Image must be uint8 type, got dtype {image.dtype}. This is an internal error."
+    assert image.dtype == np.uint8, f"Image must be uint8 type, got dtype {image.dtype}. This is an internal error."
 
     return image
 
@@ -292,7 +286,7 @@ def assemble_output_batch(outputs: list, indices: list[int], video_count: int) -
     Some values can be None if the episode is shorter than others.
     """
     output_batch = [None] * video_count
-    for out, idx in zip(outputs, indices):
+    for out, idx in zip(outputs, indices, strict=False):
         output_batch[idx] = out
     return output_batch
 
@@ -320,11 +314,10 @@ def get_output_across_videos(
             [x[video_idx] for x in text_input_list_batch],
             [x[video_idx] for x in text_output_list_batch],
             [x[video_idx] for x in answer_list_batch],
+            strict=False,
         ):
             none_mask = (ti is None, to is None, an is None)
-            assert all(none_mask) or not any(
-                none_mask
-            ), f"Misaligned Nones at video {video_idx}: {none_mask}"
+            assert all(none_mask) or not any(none_mask), f"Misaligned Nones at video {video_idx}: {none_mask}"
 
             is_none = ti is None
             if seen_none and not is_none:
@@ -367,7 +360,7 @@ def get_answer_from_completion(completion):
                 answer = "-100"
             elif answer_int > 100:
                 answer = "100"
-        except Exception as e:
+        except Exception:
             answer_int = 0
 
     return answer
@@ -442,9 +435,7 @@ def create_video_with_plot(
         fourcc = cv2.VideoWriter_fourcc("V", "P", "9", "0")
     else:
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    out = cv2.VideoWriter(
-        output_video_path, fourcc, fps_, (output_width, output_height)
-    )
+    out = cv2.VideoWriter(output_video_path, fourcc, fps_, (output_width, output_height))
 
     fig, ax = plt.subplots(dpi=200)
     canvas = FigureCanvas(fig)
@@ -454,7 +445,7 @@ def create_video_with_plot(
     env_points = data_points_env if data_points_env is not None else []
     ax.set_ylim(
         min(data_points + env_points),
-        max([100] + data_points + env_points),
+        max([100, *data_points, *env_points]),
     )
     ax.set_ylabel("Task progress (%)")
     ax.set_xlabel("Step number")
@@ -518,7 +509,7 @@ def create_video_with_plot(
             ax.draw_artist(ln2)
         canvas.draw()
         plot_image = np.frombuffer(canvas.buffer_rgba(), dtype="uint8")
-        plot_image = plot_image.reshape(canvas.get_width_height()[::-1] + (4,))
+        plot_image = plot_image.reshape((*canvas.get_width_height()[::-1], 4))
 
         plot_image_resized = cv2.resize(
             plot_image,
@@ -631,9 +622,7 @@ def load_frames_from_numpy(path: Path, npz_key: str, stride: int, start: int, en
         data = np.load(str(path))
         if npz_key not in data:
             available = list(data.keys())
-            raise ValueError(
-                f"Key '{npz_key}' not found in {path}. Available: {available}"
-            )
+            raise ValueError(f"Key '{npz_key}' not found in {path}. Available: {available}")
         arr = data[npz_key]
 
     if arr.ndim != 4:
@@ -650,8 +639,6 @@ def load_frames_from_numpy(path: Path, npz_key: str, stride: int, start: int, en
     if not frames:
         raise ValueError(f"No frames selected from numpy file: {path}")
     return frames
-
-
 
 
 def estimate_source_fps(path: str) -> float | None:
@@ -741,14 +728,11 @@ def resolve_views(front_arg: str, wrist_arg: str | None) -> tuple[str, str | Non
         if front_sub is not None and wrist_sub is not None:
             if wrist_arg is not None:
                 logging.warning(
-                    "Auto-detected multi-view subdirectories inside '%s'; "
-                    "ignoring --wrist %s",
+                    "Auto-detected multi-view subdirectories inside '%s'; ignoring --wrist %s",
                     front_arg,
                     wrist_arg,
                 )
-            logging.info(
-                "Auto-detected views: front='%s', wrist='%s'", front_sub, wrist_sub
-            )
+            logging.info("Auto-detected views: front='%s', wrist='%s'", front_sub, wrist_sub)
             return str(front_sub), str(wrist_sub)
 
     return front_arg, wrist_arg
@@ -764,7 +748,7 @@ def build_payload(
     """
     Build the request payload for the reward server.
 
-    The server expects list[list[image]] (episodes × timesteps).
+    The server expects list[list[image]] (episodes x timesteps).
     We wrap the single episode in an outer list.
     """
     external_only = wrist_frames is None

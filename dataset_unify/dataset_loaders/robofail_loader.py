@@ -7,9 +7,10 @@ This module contains RoboFail-specific logic for loading and processing data fil
 from pathlib import Path
 
 import numpy as np
+from tqdm import tqdm
+
 from dataset_unify.helpers import generate_unique_id
 from dataset_unify.video_helpers import load_video_frames
-from tqdm import tqdm
 
 
 class RoboFailFrameLoader:

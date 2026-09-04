@@ -11,22 +11,21 @@ from multiprocessing import Pool, cpu_count
 from pathlib import Path
 from typing import Any
 
+import datasets as hfds
 import h5py
 import numpy as np
+from datasets import Dataset, load_dataset
+from tqdm import tqdm
+
+# Episode/task helpers built earlier
+from dataset_unify.data_scripts.agibot.agibot_helper import get_episode_record
 from dataset_unify.helpers import (
     create_hf_trajectory,
     create_trajectory_video_optimized,
     generate_unique_id,
 )
-from dataset_unify.video_helpers import load_video_frames
 from dataset_unify.hf_schema import build_standard_dataset
-from tqdm import tqdm
-
-import datasets as hfds
-from datasets import Dataset, load_dataset
-
-# Episode/task helpers built earlier
-from dataset_unify.data_scripts.agibot.agibot_helper import get_episode_record
+from dataset_unify.video_helpers import load_video_frames
 
 # ------------------------------
 # Small utilities
@@ -222,12 +221,14 @@ def convert_agibotworld_streaming_to_hf(
     ds = load_dataset(dataset_name, streaming=True, split="train")
     # Some shards expose PNG frames instead of MP4. Widen features so casting
     # does not fail during iteration; we'll simply skip non-MP4 samples.
-    widened = hfds.Features({
-        "__key__": hfds.Value("string"),
-        "__url__": hfds.Value("string"),
-        "mp4": hfds.Value("binary"),
-        "png": hfds.Value("binary"),
-    })
+    widened = hfds.Features(
+        {
+            "__key__": hfds.Value("string"),
+            "__url__": hfds.Value("string"),
+            "mp4": hfds.Value("binary"),
+            "png": hfds.Value("binary"),
+        }
+    )
     try:
         ds = ds.cast(widened)
     except Exception:
@@ -368,7 +369,7 @@ def load_agibotworld_dataset(dataset_name_or_path: str, max_trajectories: int = 
         task_data = _load_streaming_agibotworld(dataset_name_or_path, max_trajectories)
 
     print(
-        f"Loaded {sum(len(trajectories) for trajectories in task_data.values())} trajectories from {len(task_data)} tasks"
+        f"Loaded {sum(len(trajectories) for trajectories in task_data.values())} trajectories from {len(task_data)} tasks"  # noqa: E501
     )
     return task_data
 

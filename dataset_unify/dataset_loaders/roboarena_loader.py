@@ -4,6 +4,7 @@ from collections import defaultdict
 import cv2
 import numpy as np
 import yaml
+
 from dataset_unify.helpers import generate_unique_id
 
 trajectory_info_template = {

@@ -10,17 +10,18 @@ import json
 import re
 from pathlib import Path
 
+from tqdm import tqdm
+
 from dataset_unify.helpers import generate_unique_id
 from dataset_unify.video_helpers import load_video_frames
-from tqdm import tqdm
 
 # Official task name -> language description (from MINT-SJTU/RoboFAC-dataset dataset card).
 # Task names match the card exactly (including typos: UprightStask, PegInsetionSide).
 TASK_NAME_TO_DESCRIPTION: dict[str, str] = {
     "SpinStack": "Pick up the cube on the spinning disc and stack it on another cube on the disc.",
     "SpinPullStack": "Pull out the cube on the spinning disc and stack it on another cube on the disc.",
-    "MicrowaveTask": "Put the spoon on the table into the cup. Open the door of microwave, put the cup into the microwave and close the door.",
-    "SafeTask": "Put the gold bar into the safe, close the door of the safe and rotate the cross knob on the door to lock it.",
+    "MicrowaveTask": "Put the spoon on the table into the cup. Open the door of microwave, put the cup into the microwave and close the door.",  # noqa: E501
+    "SafeTask": "Put the gold bar into the safe, close the door of the safe and rotate the cross knob on the door to lock it.",  # noqa: E501
     "ToolsTask": "Choose the correct (L-shaped) tools, grasp it to pull the correct (2-pins) charger and plug it.",
     "UprightStask": "Upright the peg and stack it on the cube.",
     "PegInsetionSide": "Insert the peg into the hole on the side of the block.",
@@ -129,7 +130,7 @@ def _load_test_qa_annos(root: Path) -> tuple[dict[str, str], dict[str, str]]:
     Each JSON is a dict: { "video_id": { "video": "path", "task": "InsertCylinder", "annos": { "Task identification": [ { "from": "human", "value": "..." }, { "from": "assistant", "value": "Insert the cylinder into the middle hole of the shelf." } ] } } }.
     We use the "Task identification" assistant value as the language description.
     Tries root/test_qa_realworld, root/test_qa_sim, and root/main/... for each.
-    """
+    """  # noqa: E501
     video_id_to_desc: dict[str, str] = {}
     task_folder_to_desc: dict[str, str] = {}
     dirs_to_try = [
@@ -162,7 +163,7 @@ def _load_test_qa_annos(root: Path) -> tuple[dict[str, str], dict[str, str]]:
                     task_folder_to_desc[task] = desc
     if video_id_to_desc:
         print(f"  Loaded {len(video_id_to_desc)} video_id->description from test_qa_* annos")
-    
+
     return video_id_to_desc, task_folder_to_desc
 
 
@@ -204,7 +205,7 @@ def _load_training_qa(root: Path) -> tuple[dict[str, str], dict[str, str]]:
     We only extract the assistant reply when the human asked the task-identification question
     (contains 'identify what task the robot is doing'). That reply is the language description.
     Tries root/training_qa.json and root/main/training_qa.json.
-    """
+    """  # noqa: E501
     video_id_to_desc: dict[str, str] = {}
     task_folder_to_desc: dict[str, str] = {}
     for candidate in (root / "training_qa.json", root / "main" / "training_qa.json"):
@@ -227,7 +228,7 @@ def _load_training_qa(root: Path) -> tuple[dict[str, str], dict[str, str]]:
         if video_id_to_desc:
             print(f"  Loaded {len(video_id_to_desc)} video_id->description from {candidate}")
             return video_id_to_desc, task_folder_to_desc
-            
+
     return video_id_to_desc, task_folder_to_desc
 
 
@@ -235,7 +236,7 @@ def _get_realworld_task_description(
     folder_name: str,
     task_folder_to_desc: dict[str, str] | None,
 ) -> str:
-    """Get language description for realworld folder: prefer training_qa (match by base task name), else TASK_NAME_TO_DESCRIPTION. ipdb if no match."""
+    """Get language description for realworld folder: prefer training_qa (match by base task name), else TASK_NAME_TO_DESCRIPTION. ipdb if no match."""  # noqa: E501
     name = folder_name.replace("so100_", "").replace("_error", "").strip("_")
     task_key = _snake_to_camel(name)
     if task_folder_to_desc:
@@ -247,6 +248,7 @@ def _get_realworld_task_description(
     task_desc = _realworld_folder_to_task_description(folder_name)
     if task_key not in TASK_NAME_TO_DESCRIPTION:
         import ipdb
+
         ipdb.set_trace()
     return task_desc
 
@@ -255,7 +257,7 @@ def _get_simulation_task_description(
     path_task_name: str,
     task_folder_to_desc: dict[str, str] | None,
 ) -> str:
-    """Get language description for simulation task: prefer task_folder from training_qa, else TASK_NAME_TO_DESCRIPTION. ipdb if no match."""
+    """Get language description for simulation task: prefer task_folder from training_qa, else TASK_NAME_TO_DESCRIPTION. ipdb if no match."""  # noqa: E501
     if task_folder_to_desc and path_task_name in task_folder_to_desc:
         return task_folder_to_desc[path_task_name]
     desc = _simulation_path_task_to_description(path_task_name)
@@ -263,6 +265,7 @@ def _get_simulation_task_description(
     task_key = _SIMULATION_PATH_TO_TASK_KEY.get(base, base)
     if task_key not in TASK_NAME_TO_DESCRIPTION:
         import ipdb
+
         ipdb.set_trace()
     return desc
 
@@ -290,7 +293,7 @@ def _parse_simulation_video_path(
         return "Simulation", "failure", "simulation_data"
     if parts[0] != "simulation_data":
         return "Simulation", "failure", "simulation_data"
-    # If second component is success_data/failure_data, task folder is parts[2]; else it's parts[1] (e.g. LiftPegUpright-box/view0/...)
+    # If second component is success_data/failure_data, task folder is parts[2]; else it's parts[1] (e.g. LiftPegUpright-box/view0/...)  # noqa: E501
     if parts[1] in ("success_data", "failure_data"):
         quality_folder = parts[1]
         path_task_name = parts[2]
@@ -335,7 +338,7 @@ def _discover_robofac_trajectories(
 
     Returns:
         List of (video_path, task, quality_label, data_source) for each trajectory.
-    """
+    """  # noqa: E501
     out: list[tuple[Path, str, str, str]] = []
 
     # Resolve root: support both /path/to/RoboFAC-dataset and /path/to/RoboFAC-dataset/main
@@ -369,7 +372,8 @@ def _discover_robofac_trajectories(
 
             for vid in videos:
                 task_desc, quality_label, data_source = _parse_simulation_video_path(
-                    vid, root,
+                    vid,
+                    root,
                     video_id_to_desc=video_id_to_desc,
                     task_folder_to_desc=task_folder_to_desc,
                 )
@@ -404,7 +408,7 @@ def load_robofac_dataset(
     if not dataset_path.exists():
         raise FileNotFoundError(f"RoboFAC dataset path not found: {dataset_path}")
 
-    # Build video_id -> description from test_qa_* annos (Task identification) and training_qa.json (human asks "identify what task the robot is doing")
+    # Build video_id -> description from test_qa_* annos (Task identification) and training_qa.json (human asks "identify what task the robot is doing")  # noqa: E501
     video_id_to_desc, task_folder_to_desc = _load_training_qa(dataset_path)
     test_vid, test_task = _load_test_qa_annos(dataset_path)
     video_id_to_desc.update(test_vid)
@@ -421,8 +425,8 @@ def load_robofac_dataset(
     if not traj_list:
         raise FileNotFoundError(
             f"No .mp4 videos found under {dataset_path}. "
-            "Check that the path points to the RoboFAC-dataset root (containing realworld_data/ and optionally simulation_data/). "
-            "If you downloaded with Hugging Face CLI, the root may be under a 'main' subfolder; the loader will try that automatically."
+            "Check that the path points to the RoboFAC-dataset root (containing realworld_data/ and optionally simulation_data/). "  # noqa: E501
+            "If you downloaded with Hugging Face CLI, the root may be under a 'main' subfolder; the loader will try that automatically."  # noqa: E501
         )
     if max_trajectories is not None and max_trajectories != -1:
         traj_list = traj_list[:max_trajectories]
@@ -430,9 +434,7 @@ def load_robofac_dataset(
     print(f"Found {len(traj_list)} trajectory videos total")
 
     task_data: dict[str, list[dict]] = {}
-    for video_path, task_desc, quality_label, data_source in tqdm(
-        traj_list, desc="Building RoboFAC trajectories"
-    ):
+    for video_path, task_desc, quality_label, data_source in tqdm(traj_list, desc="Building RoboFAC trajectories"):
         frame_loader = RoboFACFrameLoader(str(video_path))
         partial = 1.0 if quality_label == "successful" else 0.0
         trajectory = {

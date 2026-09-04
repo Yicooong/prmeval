@@ -1,12 +1,12 @@
-import os
 import json
+import os
 from collections import defaultdict
 
 import cv2
 import h5py
 import numpy as np
-from dataset_unify.helpers import generate_unique_id
 
+from dataset_unify.helpers import generate_unique_id
 
 DEBUG = False
 

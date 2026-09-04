@@ -1,9 +1,12 @@
-import os
 import json
+import os
 from multiprocessing import cpu_count
 from pathlib import Path
 
 import numpy as np
+
+# We do not stream; assume RLDS TFDS builders are already downloaded locally.
+import tensorflow_datasets as tfds
 from datasets import Dataset, concatenate_datasets
 from tqdm import tqdm
 
@@ -12,9 +15,6 @@ from dataset_unify.helpers import (
     generate_unique_id,
 )
 from dataset_unify.hf_schema import build_standard_dataset
-
-# We do not stream; assume RLDS TFDS builders are already downloaded locally.
-import tensorflow_datasets as tfds
 
 # soar_new_success_labels_path = "dataset_unify/dataset_helpers/soar_vlm_labels_checkpoint.json"
 soar_new_success_labels_path = "dataset_unify/dataset_helpers/soar_label_corrections_full.json"
@@ -120,7 +120,7 @@ def convert_soar_dataset_to_hf(
         ds = builder.as_dataset(split=split_name, shuffle_files=False)
 
         if split_name == "success":
-            with open(soar_new_success_labels_path, "r") as f:
+            with open(soar_new_success_labels_path) as f:
                 # new_success_labels = json.load(f)["results"]
                 new_success_labels = json.load(f)["label_corrections"]
                 # episodes where qwen-3-vl predicted success
@@ -176,17 +176,19 @@ def convert_soar_dataset_to_hf(
             quality_label = "successful" if split_name.lower().startswith("success") else "failure"
 
             # Build entry for this view
-            episode_entries = _process_episode((
-                steps_np,
-                ep_idx,
-                task_text,
-                output_dir,
-                dataset_name,
-                max_frames,
-                fps,
-                valid_img_key,
-                quality_label,
-            ))
+            episode_entries = _process_episode(
+                (
+                    steps_np,
+                    ep_idx,
+                    task_text,
+                    output_dir,
+                    dataset_name,
+                    max_frames,
+                    fps,
+                    valid_img_key,
+                    quality_label,
+                )
+            )
             entries.extend(episode_entries)
             produced += len(episode_entries)
 

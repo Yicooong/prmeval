@@ -6,7 +6,8 @@ across different training scripts.
 """
 
 from dataclasses import dataclass, field
-from typing import Optional, Dict, Any, List
+from typing import Any
+
 from transformers import PretrainedConfig
 
 
@@ -79,12 +80,12 @@ class ModelConfig(PretrainedConfig):
         default="l2",
         metadata={"help": "Type of progress loss: 'l1', 'l2', or 'discrete'"},
     )
-    progress_discrete_bins: Optional[int] = field(
+    progress_discrete_bins: int | None = field(
         default=None,
         metadata={"help": "Number of discrete bins for progress when using discrete loss (None for continuous)"},
     )
     # rewind sub-config
-    rewind: Optional[Dict[str, Any]] = field(default=None)
+    rewind: dict[str, Any] | None = field(default=None)
 
     def __post_init__(self):
         # from robometer.models.rewind_transformer import ReWINDTransformerConfig
@@ -110,7 +111,7 @@ class PEFTConfig:
     lora_alpha: int = field(default=64)
     lora_dropout: float = field(default=0.05)
     bias: str = field(default="none")
-    target_modules: List[str] = field(
+    target_modules: list[str] = field(
         default_factory=lambda: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
     )
     peft_vision_encoder: bool = field(default=False, metadata={"help": "Whether to attach LoRA to the vision encoder"})
@@ -121,10 +122,10 @@ class DataConfig:
     """Configuration for data loading and processing."""
 
     # Dataset paths
-    train_datasets: List[str] = field(
+    train_datasets: list[str] = field(
         default_factory=lambda: ["abraranwar/libero_rfm"], metadata={"help": "List of training dataset names"}
     )
-    eval_datasets: List[str] = field(
+    eval_datasets: list[str] = field(
         default_factory=lambda: ["abraranwar/libero_rfm"], metadata={"help": "List of evaluation dataset names"}
     )
 
@@ -144,8 +145,8 @@ class DataConfig:
             "help": "Minimum number of frames required per trajectory (trajectories with fewer frames will be filtered out)"
         },
     )
-    resized_height: Optional[int] = field(default=None, metadata={"help": "Height to resize video frames to"})
-    resized_width: Optional[int] = field(default=None, metadata={"help": "Width to resize video frames to"})
+    resized_height: int | None = field(default=None, metadata={"help": "Height to resize video frames to"})
+    resized_width: int | None = field(default=None, metadata={"help": "Width to resize video frames to"})
 
     # Video/image processing mode
     use_multi_image: bool = field(
@@ -179,18 +180,18 @@ class DataConfig:
     )
 
     # Data generation parameters
-    sample_type_ratio: List[float] = field(
+    sample_type_ratio: list[float] = field(
         default_factory=lambda: [1, 1, 1], metadata={"help": "Ratio of pref and progress samples"}
     )
     dataset_preference_ratio: float = field(
         default=0.8, metadata={"help": "Ratio of dataset preference samples to generated preference samples"}
     )
     # [rewind, suboptimal_same_task, different_task, reverse_progress]
-    preference_strategy_ratio: List[float] = field(default_factory=lambda: [1, 1, 1, 1])
+    preference_strategy_ratio: list[float] = field(default_factory=lambda: [1, 1, 1, 1])
     # [different_task, forward_progress, reverse_progress, rewind]
-    progress_strategy_ratio: List[float] = field(default_factory=lambda: [1, 1, 1, 1])
+    progress_strategy_ratio: list[float] = field(default_factory=lambda: [1, 1, 1, 1])
 
-    data_source_weights: Optional[Dict[str, float]] = field(
+    data_source_weights: dict[str, float] | None = field(
         default=None,
         metadata={
             "help": "Dictionary mapping data source names to sampling weights (e.g., {'metaworld': 0.2, 'libero': 0.8})"
@@ -202,7 +203,7 @@ class DataConfig:
     seed: int = field(default=42, metadata={"help": "Random seed for reproducibility"})
 
     # Evaluation parameters
-    eval_subset_size: Optional[int] = field(default=None, metadata={"help": "Number of samples to use for evaluation"})
+    eval_subset_size: int | None = field(default=None, metadata={"help": "Number of samples to use for evaluation"})
 
     # Dataloader parameters
     dataloader_pin_memory: bool = field(default=True, metadata={"help": "Whether to pin memory in dataloader"})
@@ -233,7 +234,7 @@ class DataConfig:
     max_success: float = field(
         default=1.0, metadata={"help": "Maximum progress threshold for success prediction (label=1, success)"}
     )
-    dataset_success_cutoff_file: Optional[str] = field(
+    dataset_success_cutoff_file: str | None = field(
         default=None,
         metadata={"help": "Path to dataset-specific success cutoff file (CSV format: dataset_name,success_percentage)"},
     )
@@ -270,42 +271,42 @@ class DataConfig:
 class CustomEvaluationConfig:
     """Config for custom evaluation settings"""
 
-    eval_types: List[str] = field(default_factory=lambda: ["policy_ranking", "confusion_matrix", "reward_alignment"])
-    policy_ranking: List[str] = field(default_factory=lambda: ["aliangdw_metaworld_metaworld_eval"])
-    confusion_matrix: List[str] = field(default_factory=lambda: ["aliangdw_metaworld_metaworld_eval"])
-    reward_alignment: List[str] = field(default_factory=lambda: ["aliangdw_metaworld_metaworld_eval"])
-    quality_preference: List[str] = field(default_factory=lambda: ["aliangdw_metaworld_metaworld_eval"])
-    comparisons_per_task: Optional[int] = field(
+    eval_types: list[str] = field(default_factory=lambda: ["policy_ranking", "confusion_matrix", "reward_alignment"])
+    policy_ranking: list[str] = field(default_factory=lambda: ["aliangdw_metaworld_metaworld_eval"])
+    confusion_matrix: list[str] = field(default_factory=lambda: ["aliangdw_metaworld_metaworld_eval"])
+    reward_alignment: list[str] = field(default_factory=lambda: ["aliangdw_metaworld_metaworld_eval"])
+    quality_preference: list[str] = field(default_factory=lambda: ["aliangdw_metaworld_metaworld_eval"])
+    comparisons_per_task: int | None = field(
         default=None,
         metadata={
             "help": "Limit number of quality preference comparisons per task. None = use all comparisons. Uniformly samples if limit is set."
         },
     )
-    max_comparisons: Optional[int] = field(
+    max_comparisons: int | None = field(
         default=None,
         metadata={
             "help": "Limit total number of quality preference comparisons across all tasks. None = use all comparisons. Uniformly samples if limit is set."
         },
     )
-    num_examples_per_quality_pr: Optional[int] = field(
+    num_examples_per_quality_pr: int | None = field(
         default=None,
         metadata={
             "help": "Number of trajectories to sample per quality label for policy ranking evaluation. Only tasks with multiple quality labels are used. If None = use all."
         },
     )
-    num_partial_successes: Optional[int] = field(
+    num_partial_successes: int | None = field(
         default=None,
         metadata={
             "help": "For RoboArena datasets: Number of total trajectories to sample using circular sampling across partial_success values. None = use num_examples_per_quality_pr per partial_success group."
         },
     )
-    confusion_matrix_n_trajectories_per_source: Optional[int] = field(
+    confusion_matrix_n_trajectories_per_source: int | None = field(
         default=None,
         metadata={
             "help": "Number of trajectories to sample per data source for confusion matrix evaluation. None = use all trajectories."
         },
     )
-    policy_ranking_max_tasks: Optional[int] = field(
+    policy_ranking_max_tasks: int | None = field(
         default=100,
         metadata={
             "help": "Maximum number of tasks to use for policy ranking evaluation. None = use all tasks with multiple quality labels."
@@ -317,7 +318,7 @@ class CustomEvaluationConfig:
             "help": "Random seed for sampling trajectories in custom evaluation samplers. Ensures all ranks sample the same trajectories to prevent hangs when dataloaders have different lengths."
         },
     )
-    reward_alignment_max_trajectories: Optional[int] = field(
+    reward_alignment_max_trajectories: int | None = field(
         default=10,
         metadata={
             "help": "Maximum number of trajectories to use for reward alignment evaluation. None = use all trajectories."
@@ -329,7 +330,7 @@ class CustomEvaluationConfig:
             "help": "Whether to use frame steps (subsequences) for reward_alignment and policy_ranking evaluations. True = generate subsequences (0:frame_step, 0:2*frame_step, etc.), False = use whole trajectory."
         },
     )
-    subsample_n_frames: Optional[int] = field(
+    subsample_n_frames: int | None = field(
         default=None,
         metadata={"help": "Number of frames to subsample for reward alignment evaluation. null = use all frames."},
     )
@@ -347,8 +348,8 @@ class TrainingConfig:
     exp_name: str = field(default="rbm")
     max_seq_length: int = field(default=1024)
     beta: float = field(default=0.1)
-    resume_from_checkpoint: Optional[str] = field(default=None)
-    load_from_checkpoint: Optional[str] = field(default=None)
+    resume_from_checkpoint: str | None = field(default=None)
+    load_from_checkpoint: str | None = field(default=None)
     overwrite_output_dir: bool = field(
         default=False,
         metadata={
@@ -360,7 +361,7 @@ class TrainingConfig:
     per_device_train_batch_size: int = field(default=1)
     gradient_accumulation_steps: int = field(default=16)
     learning_rate: float = field(default=5e-7)
-    num_train_epochs: Optional[int] = field(default=1)  # Default to 1 epoch if not specified
+    num_train_epochs: int | None = field(default=1)  # Default to 1 epoch if not specified
     save_strategy: str = field(default="steps")
     logging_steps: int = field(default=10)
     bf16: bool = field(default=False)
@@ -369,7 +370,7 @@ class TrainingConfig:
     gradient_checkpointing: bool = field(default=True)
     ddp_find_unused_parameters: bool = field(default=False)
     ddp_bucket_cap_mb: int = field(default=25)
-    max_steps: Optional[int] = field(default=-1)  # -1 means no limit, use num_train_epochs instead
+    max_steps: int | None = field(default=-1)  # -1 means no limit, use num_train_epochs instead
     save_steps: int = field(default=100)
     dataloader_pin_memory: bool = field(default=True)
     dataloader_num_workers: int = field(default=0)
@@ -377,13 +378,13 @@ class TrainingConfig:
 
     # Evaluation settings
     evaluation_strategy: str = field(default="no", metadata={"help": "Evaluation strategy: 'no', 'steps', 'epoch'"})
-    eval_steps: Optional[int] = field(
+    eval_steps: int | None = field(
         default=None, metadata={"help": "Number of steps between evaluations (required if evaluation_strategy='steps')"}
     )
     run_default_eval: bool = field(
         default=False, metadata={"help": "Whether to run default evaluation during training"}
     )
-    custom_eval_steps: Optional[int] = field(
+    custom_eval_steps: int | None = field(
         default=None,
         metadata={"help": "Number of steps between custom evaluations (required if evaluation_strategy='steps')"},
     )
@@ -399,7 +400,7 @@ class TrainingConfig:
     weight_decay: float = field(default=0.01, metadata={"help": "Weight decay for optimizer"})
 
     # Vision encoder fine-tuning settings
-    vision_encoder_lr: Optional[float] = field(
+    vision_encoder_lr: float | None = field(
         default=None,
         metadata={
             "help": "Learning rate for last N vision encoder layers. If None, uses the same LR as other parameters."
@@ -445,29 +446,29 @@ class SaveBestConfig:
     """Configuration for SaveBestCallback"""
 
     # Metric monitoring
-    metric_names: List[str] = field(
+    metric_names: list[str] = field(
         default_factory=lambda: ["custom_eval/p_rank_spearman_mw"],
         metadata={"help": "List of metric names to monitor for saving best models (will be averaged)"},
     )
-    greater_is_better: List[bool] = field(
+    greater_is_better: list[bool] = field(
         default_factory=lambda: [True],
         metadata={"help": "Whether higher values are better for each metric (must match length of metric_names)"},
     )
     keep_top_k: int = field(default=1, metadata={"help": "Number of best checkpoints/uploads to keep"})
-    save_every: Optional[int] = field(
+    save_every: int | None = field(
         default=None,
         metadata={"help": "Save 'latest' checkpoint every N steps (should be multiple of eval_steps). None disables."},
     )
 
     # Hub upload configuration
     upload_to_hub: bool = field(default=False, metadata={"help": "Whether to upload best models to HuggingFace Hub"})
-    hub_save_every: Optional[int] = field(
+    hub_save_every: int | None = field(
         default=None,
         metadata={
             "help": "Frequency (in steps) to upload to Hub. None = upload every checkpoint. Local saves always happen regardless."
         },
     )
-    hub_token: Optional[str] = field(default=None, metadata={"help": "HuggingFace token (or set HF_TOKEN env var)"})
+    hub_token: str | None = field(default=None, metadata={"help": "HuggingFace token (or set HF_TOKEN env var)"})
     hub_private: bool = field(default=False, metadata={"help": "Whether to make the Hub model private"})
 
     def __post_init__(self):
@@ -485,17 +486,15 @@ class LoggingConfig:
     save_model: bool = field(default=True)
     save_processor: bool = field(default=True)
     # Logging backends
-    log_to: List[str] = field(
+    log_to: list[str] = field(
         default_factory=list,
         metadata={"help": "List of logging backends to use, e.g., ['wandb', 'tensorboard']"},
     )
     # Wandb configuration
     wandb_project: str = field(default="rbm-model", metadata={"help": "Wandb project name"})
-    wandb_entity: Optional[str] = field(default=None, metadata={"help": "Wandb entity/username"})
-    wandb_notes: Optional[str] = field(
-        default=None, metadata={"help": "Optional notes/comment to add to the wandb run"}
-    )
-    wandb_mode: Optional[str] = field(
+    wandb_entity: str | None = field(default=None, metadata={"help": "Wandb entity/username"})
+    wandb_notes: str | None = field(default=None, metadata={"help": "Optional notes/comment to add to the wandb run"})
+    wandb_mode: str | None = field(
         default=None,
         metadata={
             "help": "Wandb mode: 'online' (default), 'offline' (local files only, no network I/O), or 'disabled'. "
@@ -511,7 +510,7 @@ class LoggingConfig:
     )
 
     # SaveBest configuration
-    save_best: Optional[SaveBestConfig] = field(default=None, metadata={"help": "SaveBestCallback configuration"})
+    save_best: SaveBestConfig | None = field(default=None, metadata={"help": "SaveBestCallback configuration"})
 
 
 @dataclass

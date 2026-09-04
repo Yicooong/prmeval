@@ -121,7 +121,7 @@ def load_roboreward_dataset(dataset_path: str, dataset_name: str) -> dict[str, l
 
     # Read metadata.jsonl
     print(f"Loading RoboReward {split} split from {metadata_file}")
-    with open(metadata_file, "r") as f:
+    with open(metadata_file) as f:
         for line_idx, line in enumerate(f):
             try:
                 entry = json.loads(line.strip())
@@ -156,13 +156,13 @@ def load_roboreward_dataset(dataset_path: str, dataset_name: str) -> dict[str, l
 
     # Print reward distribution
     all_trajs = [t for trajs in task_data.values() for t in trajs]
-    reward_counts = {i: 0 for i in range(1, 6)}
+    reward_counts = dict.fromkeys(range(1, 6), 0)
     for traj in all_trajs:
         # Reverse conversion to get original reward
         reward = int(traj["partial_success"] * 4 + 1)
         reward_counts[reward] += 1
 
-    print(f"Reward distribution:")
+    print("Reward distribution:")
     for reward, count in sorted(reward_counts.items()):
         print(f"  Reward {reward}: {count} trajectories")
     print(f"Total trajectories: {len(all_trajs)}")

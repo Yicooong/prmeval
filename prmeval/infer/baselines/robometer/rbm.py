@@ -7,23 +7,20 @@ Note: make sure that the forward pass uses all of the
 heads or there will be some problems with FSDP sharding.
 """
 
-import torch
-import torch.nn as nn
 from dataclasses import dataclass
 
+import torch
+import torch.nn as nn
+
 try:
-    from transformers import Qwen3VLModel, PreTrainedModel, GenerationMixin
+    from transformers import PreTrainedModel, Qwen3VLModel
 except ImportError:
     Qwen3VLModel = None
 
 # from transformers import AutoModelForImageTextToText as Molmo2VLModel  # Molmo2 uses AutoModelForImageTextToText
-from transformers import SmolVLMModel
-import torch.distributed as dist
-from typing import Optional
-
 import logging
 
-
+from transformers import SmolVLMModel
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +29,7 @@ def squeeze_last_safe(x: torch.Tensor) -> torch.Tensor:
     if x.ndim > 1 and x.shape[-1] == 1:
         return x.squeeze(-1)
     return x
+
 
 @dataclass
 class ModelOutput:
@@ -53,8 +51,8 @@ class PredictionHeadsMixin(nn.Module):
     def __init__(
         self,
         *args,
-        hidden_dim: Optional[int] = None,
-        model_config: Optional[object] = None,
+        hidden_dim: int | None = None,
+        model_config: object | None = None,
         dropout: float = 0.1,
         **kwargs,
     ):
@@ -139,7 +137,6 @@ class RBM(PredictionHeadsMixin, PreTrainedModel):
     """
 
     # unused param i think
-
 
     # Declare support for SDPA and Flash Attention (will delegate to underlying model), needed for Qwen3
     _supports_sdpa = True
@@ -418,7 +415,7 @@ class RBM(PredictionHeadsMixin, PreTrainedModel):
             # Average all tokens within each temporal patch group
             temporal_patch_tokens = []
             current_pos = start_position
-            for t_idx in range(T):
+            for _t_idx in range(T):
                 start_idx = current_pos
                 end_idx = current_pos + tokens_per_frame
                 patch_tokens = hidden_state[start_idx:end_idx]  # [tokens_per_frame, hidden_dim]
@@ -521,7 +518,7 @@ class RBM(PredictionHeadsMixin, PreTrainedModel):
             "pixel_values": pixel_values,
             **kwargs,
         }
-        
+
         outputs = self.model(**model_kwargs, output_hidden_states=True, return_dict=True)
 
         hidden_state = outputs.hidden_states[-1]  # [B, seq_len, hidden_dim]
@@ -542,7 +539,7 @@ class RBM(PredictionHeadsMixin, PreTrainedModel):
                 output.pref_logits = pref_or_sim_logits
         else:
             # Process frames normally
-           
+
             progress_logits, success_logits = self._process_smolvlm_frames(hidden_state, input_ids, sample_type)
             output.progress_logits = progress_logits
             output.success_logits = success_logits
@@ -620,17 +617,13 @@ class RBM(PredictionHeadsMixin, PreTrainedModel):
             "second_per_grid_ts": second_per_grid_ts,
             **kwargs,
         }
-        
+
         # Qwen3 models may need output_hidden_states=True and use hidden_states instead of last_hidden_state
-        is_qwen3 = "Qwen3" in self.base_model_id or (
-            hasattr(self.model, "config") and "Qwen3" in str(type(self.model))
-        )
+        is_qwen3 = "Qwen3" in self.base_model_id or (hasattr(self.model, "config") and "Qwen3" in str(type(self.model)))
         if is_qwen3:
             outputs = self.model(**model_kwargs, output_hidden_states=True, return_dict=True)
             # Qwen3 uses hidden_states tuple, take the last layer
-            hidden_state = (
-                outputs.hidden_states[-1] if hasattr(outputs, "hidden_states") else outputs.last_hidden_state
-            )
+            hidden_state = outputs.hidden_states[-1] if hasattr(outputs, "hidden_states") else outputs.last_hidden_state
         else:
             outputs = self.model(**model_kwargs)
             hidden_state = outputs.last_hidden_state  # [B, seq_len, hidden_dim]
@@ -715,17 +708,13 @@ class RBM(PredictionHeadsMixin, PreTrainedModel):
             "image_num_crops": image_num_crops,
             **kwargs,
         }
-    
+
         # Qwen3 models may need output_hidden_states=True and use hidden_states instead of last_hidden_state
-        is_qwen3 = "Qwen3" in self.base_model_id or (
-            hasattr(self.model, "config") and "Qwen3" in str(type(self.model))
-        )
+        is_qwen3 = "Qwen3" in self.base_model_id or (hasattr(self.model, "config") and "Qwen3" in str(type(self.model)))
         if is_qwen3:
             outputs = self.model(**model_kwargs, output_hidden_states=True, return_dict=True)
             # Qwen3 uses hidden_states tuple, take the last layer
-            hidden_state = (
-                outputs.hidden_states[-1] if hasattr(outputs, "hidden_states") else outputs.last_hidden_state
-            )
+            hidden_state = outputs.hidden_states[-1] if hasattr(outputs, "hidden_states") else outputs.last_hidden_state
         else:
             outputs = self.model(**model_kwargs)
             hidden_state = outputs.last_hidden_state  # [B, seq_len, hidden_dim]
@@ -786,7 +775,6 @@ class RBM(PredictionHeadsMixin, PreTrainedModel):
         trajectory_B_lengths = []
         has_trajectory_B = sample_type != "progress"
 
-    
         # First pass: extract all frame embeddings
         for i, seq_ids in enumerate(input_ids):
             vision_start_positions = (seq_ids == vision_start_token_id).nonzero(as_tuple=True)[0]
@@ -835,15 +823,19 @@ class RBM(PredictionHeadsMixin, PreTrainedModel):
                 progress_A_split = torch.split(squeeze_last_safe(progress_A_out), trajectory_A_lengths, dim=0)
             success_A_split = torch.split(success_A_out, trajectory_A_lengths, dim=0)
 
-            for prog, succ in zip(progress_A_split, success_A_split):
+            for prog, succ in zip(progress_A_split, success_A_split, strict=False):
                 progress_logits_A.append(prog)
                 success_logits_A.append(succ)
 
         # Batch process trajectory B
         if has_trajectory_B:
-            valid_B = [(f, l) for f, l in zip(all_trajectory_B_frames, trajectory_B_lengths) if f is not None]
+            valid_B = [
+                (frames, length)
+                for frames, length in zip(all_trajectory_B_frames, trajectory_B_lengths, strict=False)
+                if frames is not None
+            ]
             if valid_B:
-                valid_B_frames, valid_B_lengths = zip(*valid_B)
+                valid_B_frames, valid_B_lengths = zip(*valid_B, strict=False)
                 batched_B = torch.cat(valid_B_frames, dim=0)
                 progress_B_out = self.progress_head(batched_B)
                 success_B_out = squeeze_last_safe(self.success_head(batched_B))
@@ -898,14 +890,13 @@ class RBM(PredictionHeadsMixin, PreTrainedModel):
         success_logits_A = []
         success_logits_B = []
 
-    
         for i, seq_ids in enumerate(input_ids):
             vision_start_positions = (seq_ids == vision_start_token_id).nonzero(as_tuple=True)[0]
             if len(vision_start_positions) == 0:
                 raise ValueError(f"vision_start_token not found in sequence {i}")
 
             if video_grid_thw is None or i >= len(video_grid_thw):
-                raise ValueError(f"video_grid_thw required for video mode")
+                raise ValueError("video_grid_thw required for video mode")
 
             # Trajectory A
             grid_idx_A = i if sample_type == "progress" else i * tps

@@ -1,23 +1,24 @@
 from __future__ import annotations
 
-from typing import Any, ClassVar, List
 import logging
-import sys
+import os
+import time
+from typing import Any, ClassVar
+
 import numpy as np
 from openai import OpenAI
-import time
-import os
 
 from ...core.config import InferConfig
 from ...core.registry import register_infer
 from ...core.schemas import EvaluationSample, Prediction, ProgressPrediction, ProgressSample
+from ..base import Infer
 from ..utils import normalize_api_base_url
 from .sole_r1.constants import (
     API_RESPONSE_REPLACEMENTS,
     USER_PROMPT_TEMPLATE_GPT,
 )
-from .sole_r1.utils import count_images, encode_images, process_images, build_payload
-from ..base import Infer
+from .sole_r1.utils import build_payload, count_images, encode_images, process_images
+
 logger = logging.getLogger(__name__)
 
 
@@ -33,18 +34,15 @@ class RemoteModel(Infer):
             raise ValueError("OpenAI-compatible inference requires infer.base_url")
         if not config.model_id:
             raise ValueError("OpenAI-compatible inference requires infer.model_id")
-        self.config
         self.model_id = config.model_id or os.getenv("MODEL_ID")
-        self.base_url = normalize_api_base_url(
-            config.base_url or os.getenv("BASE_URL")
-        )
+        self.keep_base_url = bool((config.options or {}).get("keep_base_url", False))
+        self.base_url = normalize_api_base_url(config.base_url or os.getenv("BASE_URL"), self.keep_base_url)
         self.api_key = config.api_key or os.getenv("API_KEY") or "EMPTY"
-            
+
         self.client = OpenAI(
             api_key=self.api_key,
             base_url=self.base_url,
         )
-        
 
     def gpt(
         self,
@@ -134,7 +132,6 @@ class RemoteModel(Infer):
                 else:
                     prompt_list.append("")
 
-           
             logger.debug("\n\n*******************************************************************************")
             logger.debug(prompt_list[-1])
             logger.debug("\n----------------- Response -----------------")
@@ -206,9 +203,9 @@ class RemoteModel(Infer):
 
     def compute_batch_progress(
         self,
-        frames_array: List[np.ndarray],
-        task_description: List[str],
-    ) -> list[List[float]]:
+        frames_array: list[np.ndarray],
+        task_description: list[str],
+    ) -> list[list[float]]:
         """Compute progress prediction for a trajectory.
 
         Args:
@@ -226,30 +223,27 @@ class RemoteModel(Infer):
         )
         response = self.callback(payload)
         if response is None:
-            logging.error("No response received from server (timeout or connection error).")
-            sys.exit(1)
+            raise RuntimeError("No response received from server (timeout or connection error)")
 
         if not response.get("success", False):
-            logging.error("Server returned an error: %s", response.get("message", "<no message>"))
-            sys.exit(1)
+            raise RuntimeError(f"Server returned an error: {response.get('message', '<no message>')}")
 
         data = response["data"]
         valid_answers = data["valid_answers"]
 
         return [(0.01 * answers).tolist() for answers in valid_answers]
 
-    def predict(self, samples: List[EvaluationSample]) -> List[Prediction]:
+    def predict(self, samples: list[EvaluationSample]) -> list[Prediction]:
         result = []
         if not isinstance(samples[0], ProgressSample):
             raise TypeError(f"{self.config.name} only supports progress samples")
         values = self.compute_batch_progress(
-            [np.asarray(sample.trajectory.frames) for sample in samples],
-            [sample.trajectory.task for sample in samples]
+            [np.asarray(sample.trajectory.frames) for sample in samples], [sample.trajectory.task for sample in samples]
         )
 
         if len(values) != len(samples):
             raise ValueError("input length must same as output")
-        for value, sample in zip(values, samples):
+        for value, sample in zip(values, samples, strict=False):
             expected = len(sample.trajectory.frames)
             if len(value) != expected:
                 raise ValueError(f"Progress length mismatch: expected {expected}, got {len(value)}")

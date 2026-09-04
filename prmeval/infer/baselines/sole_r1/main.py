@@ -24,7 +24,6 @@ from .vlm_batch_decode import (
 
 
 class InferenceServer:
-
     def __init__(self, checkpoint_path, infer_cfg):
         """
         Create a server with the given port number and interface names
@@ -124,24 +123,36 @@ class InferenceServer:
 
             if from_zero:
                 if external_only:
-                    questions = [USER_QUESTION_EXTERNAL_VIEW_FROM_ZERO_TEMPLATE.format(
-                        task_description=task,
-                    ) for task in tasks]
+                    questions = [
+                        USER_QUESTION_EXTERNAL_VIEW_FROM_ZERO_TEMPLATE.format(
+                            task_description=task,
+                        )
+                        for task in tasks
+                    ]
                 else:
-                    questions = [USER_QUESTION_FROM_ZERO_TEMPLATE.format(
-                        task_description=task,
-                    ) for task in tasks]
+                    questions = [
+                        USER_QUESTION_FROM_ZERO_TEMPLATE.format(
+                            task_description=task,
+                        )
+                        for task in tasks
+                    ]
             else:
                 if external_only:
-                    questions = [USER_QUESTION_EXTERNAL_VIEW_TEMPLATE.format(
-                        task_description=task,
-                        prev_progress=0,
-                    ) for task in tasks]
+                    questions = [
+                        USER_QUESTION_EXTERNAL_VIEW_TEMPLATE.format(
+                            task_description=task,
+                            prev_progress=0,
+                        )
+                        for task in tasks
+                    ]
                 else:
-                    questions = [USER_QUESTION_TEMPLATE.format(
-                        task_description=task,
-                        prev_progress=0,
-                    ) for task in tasks]
+                    questions = [
+                        USER_QUESTION_TEMPLATE.format(
+                            task_description=task,
+                            prev_progress=0,
+                        )
+                        for task in tasks
+                    ]
 
             (
                 text_input_list_batch,

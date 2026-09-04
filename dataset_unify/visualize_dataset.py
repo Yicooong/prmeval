@@ -13,7 +13,6 @@ from pathlib import Path
 import cv2
 import matplotlib.pyplot as plt
 import numpy as np
-
 from datasets import load_from_disk
 
 
@@ -48,7 +47,7 @@ def _reencode_video_for_compatibility(video_bytes: bytes) -> bytes:
                 if video_writer.isOpened():
                     break
                 video_writer.release()
-            except:
+            except Exception:
                 continue
 
         if not video_writer or not video_writer.isOpened():
@@ -75,7 +74,7 @@ def _reencode_video_for_compatibility(video_bytes: bytes) -> bytes:
         try:
             os.unlink(temp_input_path)
             os.unlink(temp_output_path)
-        except:
+        except Exception:
             pass
 
 

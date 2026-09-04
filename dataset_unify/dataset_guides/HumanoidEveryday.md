@@ -64,46 +64,45 @@ Each time step is represented by a Python dictionary with the following fields:
 ```python
 {
     # Scalar identifiers
-    "time": np.float64,                # UNIX timestamp (s)
-    "robot_type": np.str_,             # Robot model identifier (G1 only)
-
+    "time": np.float64,  # UNIX timestamp (s)
+    "robot_type": np.str_,  # Robot model identifier (G1 only)
     # Robot states
     "states": {
-        "arm_state": np.ndarray((14,), dtype=np.float64),   # 14 joint angles
+        "arm_state": np.ndarray((14,), dtype=np.float64),  # 14 joint angles
         "leg_state": np.ndarray((15 or 13,), dtype=np.float64),  # 15 joint angles for G1, 13 for H1_2
-        "hand_state": np.ndarray((14 or 12,), dtype=np.float64), # 14 joint angles for Unitree Dex3 Hand, 12 for Inspire Dextrous Hand
+        "hand_state": np.ndarray(
+            (14 or 12,), dtype=np.float64
+        ),  # 14 joint angles for Unitree Dex3 Hand, 12 for Inspire Dextrous Hand
         "hand_pressure_state": [...],  # List of per-sensor readings (9 sensors per hand)
         "imu": {
-            "quaternion": np.ndarray((4,), dtype=np.float64),    # [w, x, y, z]
-            "accelerometer": np.ndarray((3,), dtype=np.float64), # [ax, ay, az]
-            "gyroscope": np.ndarray((3,), dtype=np.float64),     # [gx, gy, gz]
-            "rpy": np.ndarray((3,), dtype=np.float64)            # [roll, pitch, yaw]
+            "quaternion": np.ndarray((4,), dtype=np.float64),  # [w, x, y, z]
+            "accelerometer": np.ndarray((3,), dtype=np.float64),  # [ax, ay, az]
+            "gyroscope": np.ndarray((3,), dtype=np.float64),  # [gx, gy, gz]
+            "rpy": np.ndarray((3,), dtype=np.float64),  # [roll, pitch, yaw]
         },
         "odometry": {
             "position": np.ndarray((3,), dtype=np.float64),  # [x, y, z]
             "velocity": np.ndarray((3,), dtype=np.float64),  # [vx, vy, vz]
-            "rpy": np.ndarray((3,), dtype=np.float64),      # [roll, pitch, yaw]
-            "quat": np.ndarray((4,), dtype=np.float64)      # [w, x, y, z]
-        }
+            "rpy": np.ndarray((3,), dtype=np.float64),  # [roll, pitch, yaw]
+            "quat": np.ndarray((4,), dtype=np.float64),  # [w, x, y, z]
+        },
     },
-
     # Control commands and solutions
     "actions": {
         "right_angles": np.ndarray((7,), dtype=np.float64),  # commanded joint angles
-        "left_angles": np.ndarray((7,), dtype=np.float64),   # commanded joint angles
-        "armtime": np.float64,                               # timestamp
-        "iktime": np.float64,                                # timestamp
-        "sol_q": np.ndarray((14,), dtype=np.float64),       # solution joint angles
-        "tau_ff": np.ndarray((14,), dtype=np.float64),      # feedforward torques
+        "left_angles": np.ndarray((7,), dtype=np.float64),  # commanded joint angles
+        "armtime": np.float64,  # timestamp
+        "iktime": np.float64,  # timestamp
+        "sol_q": np.ndarray((14,), dtype=np.float64),  # solution joint angles
+        "tau_ff": np.ndarray((14,), dtype=np.float64),  # feedforward torques
         "head_rmat": np.ndarray((3, 3), dtype=np.float64),  # rotation matrix
         "left_pose": np.ndarray((4, 4), dtype=np.float64),  # homogeneous transform
-        "right_pose": np.ndarray((4, 4), dtype=np.float64)  # homogeneous transform
+        "right_pose": np.ndarray((4, 4), dtype=np.float64),  # homogeneous transform
     },
-
     # High-dimensional observations
-    "image": np.ndarray((480, 640, 3), dtype=np.uint8),     # RGB image
-    "depth": np.ndarray((480, 640), dtype=np.uint16),       # Depth map
-    "lidar": np.ndarray((~6000, 3), dtype=np.float64)       # around 6000 points for lidar point cloud
+    "image": np.ndarray((480, 640, 3), dtype=np.uint8),  # RGB image
+    "depth": np.ndarray((480, 640), dtype=np.uint16),  # Depth map
+    "lidar": np.ndarray((~6000, 3), dtype=np.float64),  # around 6000 points for lidar point cloud
 }
 ```
 

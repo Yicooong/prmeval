@@ -16,11 +16,11 @@ Your dataset loader must produce trajectories in this format:
 
 ```python
 {
-    'frames': List[Union[str, bytes, np.ndarray]],  # Video file paths, MP4 bytes, or frame arrays
-    'actions': np.ndarray,                          # Robot actions (N, action_dim)
-    'is_robot': bool,                               # True for robot data, False for human
-    'task': str,                                    # Human-readable task description
-    'optimal': str                                  # "optimal", "suboptimal", or "failed"
+    "frames": List[Union[str, bytes, np.ndarray]],  # Video file paths, MP4 bytes, or frame arrays
+    "actions": np.ndarray,  # Robot actions (N, action_dim)
+    "is_robot": bool,  # True for robot data, False for human
+    "task": str,  # Human-readable task description
+    "optimal": str,  # "optimal", "suboptimal", or "failed"
 }
 ```
 
@@ -197,28 +197,31 @@ uv run python data/generate_hf_dataset.py \
 ### HDF5 Datasets (like LIBERO)
 ```python
 import h5py
-with h5py.File(file_path, 'r') as f:
-    frames = f['observations']['camera_data'][:]
-    actions = f['actions'][:]
+
+with h5py.File(file_path, "r") as f:
+    frames = f["observations"]["camera_data"][:]
+    actions = f["actions"][:]
 ```
 
 ### JSON + Video Files
 ```python
 import json
-with open(metadata_file, 'r') as f:
+
+with open(metadata_file, "r") as f:
     metadata = json.load(f)
-    
-video_path = base_path / metadata['video_file']
+
+video_path = base_path / metadata["video_file"]
 frames = [str(video_path)]  # Let converter handle video loading
 ```
 
 ### Pickle Files
 ```python
 import pickle
-with open(file_path, 'rb') as f:
+
+with open(file_path, "rb") as f:
     episode_data = pickle.load(f)
-    frames = episode_data['observations']['images']
-    actions = episode_data['actions']
+    frames = episode_data["observations"]["images"]
+    actions = episode_data["actions"]
 ```
 
 ## Error Handling

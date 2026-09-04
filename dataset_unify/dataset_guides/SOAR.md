@@ -165,18 +165,18 @@ python dataset_unify/dataset_helpers/generate_soar_labels_vlm.py \
 ```python
 import json
 
-with open('soar_labels_8b.json', 'r') as f:
+with open("soar_labels_8b.json", "r") as f:
     data = json.load(f)
 
 # Check agreement with original labels
-results = data['results']
-disagreements = [r for r in results if r['predicted_label'] != r['original_label']]
+results = data["results"]
+disagreements = [r for r in results if r["predicted_label"] != r["original_label"]]
 
 print(f"Total episodes: {len(results)}")
 print(f"Disagreements: {len(disagreements)}")
 
 # Examine low-confidence predictions
-low_confidence = [r for r in results if r['confidence'] < 0.6]
+low_confidence = [r for r in results if r["confidence"] < 0.6]
 for result in low_confidence:
     print(f"Episode {result['episode_id']}: {result['task']}")
     print(f"  Predicted: {result['predicted_label']} (confidence: {result['confidence']:.2f})")

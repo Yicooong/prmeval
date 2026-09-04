@@ -1,26 +1,26 @@
-import os
-import cv2
 import gc
+import os
 from multiprocessing import cpu_count
 from pathlib import Path
 from typing import Any
 
+import cv2
 import numpy as np
+from datasets import Dataset
+from tqdm import tqdm
+
 from dataset_unify.dataset_helpers.oxe_helper import OXE_DATASET_CONFIGS
 from dataset_unify.helpers import (
     create_hf_trajectory,
     generate_unique_id,
 )
 from dataset_unify.hf_schema import build_standard_dataset
-from tqdm import tqdm
-
-from datasets import Dataset
 
 # Disable GPUs for TensorFlow in this loader to avoid CUDA context issues in workers
 os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
 DEBUG_MODE = False
 
-import tensorflow_datasets as tfds
+import tensorflow_datasets as tfds  # noqa: E402 - CUDA must be disabled before importing TensorFlow
 
 OXE_VALID_DATASETS = [
     "austin_buds_dataset_converted_externally_to_rlds",

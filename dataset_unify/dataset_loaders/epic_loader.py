@@ -29,7 +29,7 @@ class EpicClip:
 
 def _read_epic_csv(csv_path: Path) -> list[EpicClip]:
     clips: list[EpicClip] = []
-    with open(csv_path, "r") as f:
+    with open(csv_path) as f:
         reader = csv.DictReader(f)
         for row in reader:
             try:
@@ -207,6 +207,7 @@ def convert_epic_dataset_to_hf(
                             break
             else:
                 from multiprocessing import Pool
+
                 from tqdm import tqdm
 
                 with Pool(processes=num_workers) as pool:
@@ -225,7 +226,6 @@ def convert_epic_dataset_to_hf(
                             break
 
             file_batch = []
-            vec_batch = []
 
     if not entries:
         return build_standard_dataset([])

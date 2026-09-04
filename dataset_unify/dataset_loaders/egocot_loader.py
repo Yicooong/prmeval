@@ -1,9 +1,10 @@
-import os
 import json
+import os
 from collections import defaultdict
-from tqdm import tqdm
 
 import numpy as np
+from tqdm import tqdm
+
 from dataset_unify.helpers import generate_unique_id
 
 trajectory_info_template = {
@@ -103,7 +104,7 @@ def load_egocot_dataset(dataset_path: str) -> dict[str, list[dict]]:
     """
     # Locate results.json files
     json_files = []
-    for root, dirs, files in os.walk(dataset_path):
+    for root, _dirs, files in os.walk(dataset_path):
         for file in files:
             if file.lower() == "results.json":
                 json_files.append(os.path.join(root, file))
@@ -117,7 +118,7 @@ def load_egocot_dataset(dataset_path: str) -> dict[str, list[dict]]:
     for json_file in json_files:
         print(f"Loading annotations from {json_file}")
 
-        with open(json_file, "r") as f:
+        with open(json_file) as f:
             annotations = json.load(f)
 
         # Normalize JSON structures
@@ -146,7 +147,7 @@ def load_egocot_dataset(dataset_path: str) -> dict[str, list[dict]]:
             caption = item.get("planing").split("\n")[0][1:]
             if not caption:
                 caption = item.get("caption")  # use the backup original caption
-            score = item.get("score")
+            item.get("score")
 
             if not image_filename or not caption:
                 print(f"Skipping item with missing image or caption: {item}")

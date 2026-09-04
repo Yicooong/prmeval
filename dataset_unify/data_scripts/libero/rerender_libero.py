@@ -116,7 +116,7 @@ def main(args):
     # Create target directory
     if os.path.isdir(args.libero_target_dir):
         user_input = input(
-            f"Target directory already exists at path: {args.libero_target_dir}\nEnter 'y' to overwrite the directory, or anything else to exit: "
+            f"Target directory already exists at path: {args.libero_target_dir}\nEnter 'y' to overwrite the directory, or anything else to exit: "  # noqa: E501
         )
         if user_input != "y":
             exit()
@@ -165,7 +165,7 @@ def main(args):
             env.reset()
             env.set_init_state(orig_states[0])
             for _ in range(10):
-                obs, reward, done, info = env.step(get_libero_dummy_action("llava"))
+                obs, _reward, done, _info = env.step(get_libero_dummy_action("llava"))
 
             # Set up new data lists
             states = []
@@ -210,10 +210,12 @@ def main(args):
                     gripper_states.append(obs["robot0_gripper_qpos"])
                 joint_states.append(obs["robot0_joint_pos"])
                 ee_states.append(
-                    np.hstack((
-                        obs["robot0_eef_pos"],
-                        T.quat2axisangle(obs["robot0_eef_quat"]),
-                    ))
+                    np.hstack(
+                        (
+                            obs["robot0_eef_pos"],
+                            T.quat2axisangle(obs["robot0_eef_quat"]),
+                        )
+                    )
                 )
                 agentview_images.append(obs["agentview_image"])
                 eye_in_hand_images.append(obs["robot0_eye_in_hand_image"])
@@ -275,7 +277,7 @@ def main(args):
 
             # Count total number of failure replays so far
             print(
-                f"Total # episodes replayed: {num_replays}, Total # failures: {num_failures} ({num_failures / num_replays * 100:.1f} %)"
+                f"Total # episodes replayed: {num_replays}, Total # failures: {num_failures} ({num_failures / num_replays * 100:.1f} %)"  # noqa: E501
             )
 
             # Report total number of no-op actions filtered out so far

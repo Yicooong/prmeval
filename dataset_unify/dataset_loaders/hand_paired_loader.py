@@ -11,7 +11,6 @@ import numpy as np
 
 from dataset_unify.helpers import generate_unique_id
 
-
 CAMERA_VIEWS = ["external_imgs", "over_shoulder_imgs"]
 
 
@@ -39,7 +38,7 @@ class HandPairedFrameLoader:
 
 def _sorted_jpgs(dir_path: Path) -> list[str]:
     """Return sorted list of JPG file paths from a directory."""
-    paths = [p for p in dir_path.glob("*.jpg")]
+    paths = list(dir_path.glob("*.jpg"))
 
     def _key(p: Path):
         # Extract number from filenames like "im_0.jpg", "im_1.jpg", etc.

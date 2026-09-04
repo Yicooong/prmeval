@@ -71,6 +71,4 @@ API_RESPONSE_REPLACEMENTS = {
     "\u2014": "-",  # em dash
 }
 
-SYSTEM_PROMPT_GEMINI = (
-    "You are an expert roboticist with the goal of predicting task progress percentages given frames from a video of a robot attempting to complete a task."
-)
+SYSTEM_PROMPT_GEMINI = "You are an expert roboticist with the goal of predicting task progress percentages given frames from a video of a robot attempting to complete a task."

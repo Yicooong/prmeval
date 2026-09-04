@@ -1,7 +1,7 @@
 import io
 import os
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 from datasets import Dataset, load_dataset
@@ -39,7 +39,7 @@ def _build_molmo_video_paths(
     return full_path, rel_path
 
 
-def _to_rgb_numpy(img_cell: Any) -> Optional[np.ndarray]:
+def _to_rgb_numpy(img_cell: Any) -> np.ndarray | None:
     """Convert a datasets Image cell (dict with bytes/path, PIL.Image, or np.ndarray) to RGB uint8 ndarray."""
     if img_cell is None:
         return None
@@ -106,7 +106,7 @@ def convert_molmoact_dataset_to_hf(
         try:
             import json
 
-            with open(jsonl_path, "r") as f:
+            with open(jsonl_path) as f:
                 for line in f:
                     line = line.strip()
                     if not line:
@@ -184,7 +184,7 @@ def convert_molmoact_dataset_to_hf(
         streaming=True,
     )
 
-    current_ep: Optional[int] = None
+    current_ep: int | None = None
     frames_by_view: dict[str, list[np.ndarray]] = {}
     label = f"{dataset_name}"
 

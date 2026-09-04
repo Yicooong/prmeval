@@ -9,8 +9,9 @@ from pathlib import Path
 
 import h5py
 import numpy as np
-from dataset_unify.helpers import generate_unique_id
 from tqdm import tqdm
+
+from dataset_unify.helpers import generate_unique_id
 
 
 class LiberoFrameLoader:
@@ -153,6 +154,6 @@ def load_libero_dataset(base_path: str) -> dict[str, list[dict]]:
             # print(f"  Loaded {len(trajectories)} trajectories for {task_name}")
 
     print(
-        f"Loaded {sum(len(trajectories) for trajectories in task_data.values())} trajectories from {len(task_data)} tasks"
+        f"Loaded {sum(len(trajectories) for trajectories in task_data.values())} trajectories from {len(task_data)} tasks"  # noqa: E501
     )
     return task_data

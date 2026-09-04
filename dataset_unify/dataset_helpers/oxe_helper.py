@@ -770,46 +770,52 @@ OXE_DATASET_CONFIGS = {
         "state_encoding": StateEncoding.POS_EULER,
         "action_encoding": ActionEncoding.EEF_POS,
     },
-    "imperialcollege_sawyer_wrist_cam": {
-        "image_obs_keys": {"primary": "image", "secondary": None, "wrist": "wrist_image"},
-        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
-        "state_obs_keys": ["state"],
-        "state_encoding": StateEncoding.POS_EULER,
-        "action_encoding": ActionEncoding.EEF_POS,
-    },
-    "kaist_nonprehensile_converted_externally_to_rlds": {
-        "image_obs_keys": {"primary": "image", "secondary": None, "wrist": None},
-        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
-        "state_obs_keys": ["state"],
-        "state_encoding": StateEncoding.POS_EULER,
-        "action_encoding": ActionEncoding.EEF_POS,
-    },
-    "berkeley_mvp_converted_externally_to_rlds": {
-        "image_obs_keys": {"primary": "hand_image", "secondary": None, "wrist": "hand_image"},
-        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
-        "state_obs_keys": ["state"],
-        "state_encoding": StateEncoding.POS_QUAT,
-        "action_encoding": ActionEncoding.JOINT_POS,
-    },
-    "berkeley_rpt_converted_externally_to_rlds": {
-        "image_obs_keys": {"primary": "hand_image", "secondary": None, "wrist": "hand_image"},
-        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
-        "state_obs_keys": ["state"],
-        "state_encoding": StateEncoding.POS_QUAT,
-        "action_encoding": ActionEncoding.JOINT_POS,
-    },
-    "nyu_rot_dataset_converted_externally_to_rlds": {
-        "image_obs_keys": {"primary": "image", "secondary": None, "wrist": None},
-        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
-        "state_obs_keys": ["state"],
-        "state_encoding": StateEncoding.POS_QUAT,
-        "action_encoding": ActionEncoding.JOINT_POS,
-    },
-    "tokyo_u_lsmo_converted_externally_to_rlds": {
-        "image_obs_keys": {"primary": "image", "secondary": None, "wrist": None},
-        "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
-        "state_obs_keys": ["state"],
-        "state_encoding": StateEncoding.POS_QUAT,
-        "action_encoding": ActionEncoding.JOINT_POS,
-    },
 }
+
+# These overrides intentionally replace the earlier OXE defaults.
+OXE_DATASET_CONFIGS.update(
+    {
+        "imperialcollege_sawyer_wrist_cam": {
+            "image_obs_keys": {"primary": "image", "secondary": None, "wrist": "wrist_image"},
+            "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
+            "state_obs_keys": ["state"],
+            "state_encoding": StateEncoding.POS_EULER,
+            "action_encoding": ActionEncoding.EEF_POS,
+        },
+        "kaist_nonprehensile_converted_externally_to_rlds": {
+            "image_obs_keys": {"primary": "image", "secondary": None, "wrist": None},
+            "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
+            "state_obs_keys": ["state"],
+            "state_encoding": StateEncoding.POS_EULER,
+            "action_encoding": ActionEncoding.EEF_POS,
+        },
+        "berkeley_mvp_converted_externally_to_rlds": {
+            "image_obs_keys": {"primary": "hand_image", "secondary": None, "wrist": "hand_image"},
+            "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
+            "state_obs_keys": ["state"],
+            "state_encoding": StateEncoding.POS_QUAT,
+            "action_encoding": ActionEncoding.JOINT_POS,
+        },
+        "berkeley_rpt_converted_externally_to_rlds": {
+            "image_obs_keys": {"primary": "hand_image", "secondary": None, "wrist": "hand_image"},
+            "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
+            "state_obs_keys": ["state"],
+            "state_encoding": StateEncoding.POS_QUAT,
+            "action_encoding": ActionEncoding.JOINT_POS,
+        },
+        "nyu_rot_dataset_converted_externally_to_rlds": {
+            "image_obs_keys": {"primary": "image", "secondary": None, "wrist": None},
+            "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
+            "state_obs_keys": ["state"],
+            "state_encoding": StateEncoding.POS_QUAT,
+            "action_encoding": ActionEncoding.JOINT_POS,
+        },
+        "tokyo_u_lsmo_converted_externally_to_rlds": {
+            "image_obs_keys": {"primary": "image", "secondary": None, "wrist": None},
+            "depth_obs_keys": {"primary": None, "secondary": None, "wrist": None},
+            "state_obs_keys": ["state"],
+            "state_encoding": StateEncoding.POS_QUAT,
+            "action_encoding": ActionEncoding.JOINT_POS,
+        },
+    }
+)

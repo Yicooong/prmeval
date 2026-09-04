@@ -5,17 +5,15 @@ import os
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # hide INFO/WARN/ERROR; only FATAL remains
 import multiprocessing as mp
-
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import partial
 from multiprocessing import Pool, cpu_count
-from typing import Any, Optional
-
-from pyrallis import wrap
-from tqdm import tqdm
+from typing import Any
 
 from datasets import Dataset
+from pyrallis import wrap
+from tqdm import tqdm
 
 # Dataset-specific loaders exchange plain dictionaries; PRMEval types are intentionally not imported here.
 from dataset_unify.helpers import (
@@ -69,7 +67,7 @@ class DatasetConfig:
     """Config for dataset settings"""
 
     dataset_path: str = field(default="", metadata={"help": "Path to the dataset"})
-    dataset_name: Optional[str] = field(default=None, metadata={"help": "Name of the dataset (required)"})
+    dataset_name: str | None = field(default=None, metadata={"help": "Name of the dataset (required)"})
     exclude_wrist_cam: bool = field(default=False, metadata={"help": "Exclude wrist camera views (MIT Franka only)"})
     view: str = field(default="external_main", metadata={"help": "Semantic camera view for simulator rollouts"})
 
@@ -79,14 +77,14 @@ class OutputConfig:
     """Config for output settings"""
 
     output_dir: str = field(default="robometer_dataset", metadata={"help": "Output directory for the dataset"})
-    max_trajectories: Optional[int] = field(
+    max_trajectories: int | None = field(
         default=None, metadata={"help": "Maximum number of trajectories to process (None for all)"}
     )
     max_frames: int = field(
         default=64, metadata={"help": "Maximum number of frames per trajectory (-1 for no downsampling)"}
     )
     use_video: bool = field(default=True, metadata={"help": "Must be true; frame-image mode is not supported"})
-    shortest_edge_size: Optional[int] = field(default=240, metadata={"help": "Shortest edge size for video resizing"})
+    shortest_edge_size: int | None = field(default=240, metadata={"help": "Shortest edge size for video resizing"})
     center_crop: bool = field(
         default=False,
         metadata={"help": "Center crop the video to the target size. Defaults to False, which means no cropping."},
@@ -210,9 +208,7 @@ def convert_dataset_to_hf_format(
             )
             if processed_trajectory is None:
                 continue
-            processed_trajectory["frames"] = os.path.join(
-                subdir_name, f"trajectory_{trajectory_idx:04d}.mp4"
-            )
+            processed_trajectory["frames"] = os.path.join(subdir_name, f"trajectory_{trajectory_idx:04d}.mp4")
             all_entries.append(processed_trajectory)
     else:
         # Parallel processing

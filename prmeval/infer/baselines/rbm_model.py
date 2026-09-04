@@ -9,23 +9,19 @@ and computing progress predictions.
 from __future__ import annotations
 
 import logging
-from typing import Any, ClassVar, List, Union, Dict
+from typing import Any, ClassVar
 
 import numpy as np
+import torch
+from qwen_vl_utils import process_vision_info
 
 from ...core.config import InferConfig
 from ...core.registry import register_infer
 from ...core.schemas import EvaluationSample, Prediction, ProgressPrediction, ProgressSample
 from ..base import Infer
-from transformers import AutoProcessor, Qwen3VLModel
-from qwen_vl_utils import process_vision_info
-import torch
-from .robometer.utils import load_model_from_hf, convert_frames_to_pil_images, _resize_pil, convert_bins_to_continuous
-
+from .robometer.utils import _resize_pil, convert_bins_to_continuous, convert_frames_to_pil_images, load_model_from_hf
 
 logger = logging.getLogger(__name__)
-
-
 
 
 @register_infer("rewind")
@@ -63,7 +59,7 @@ class RBMModel(Infer):
         # Load model, config, processor, and tokenizer using the helper function
         # This handles loading config.yaml from checkpoint and setting up everything
         logger.info(f"Loading model from checkpoint: {model_path}")
-    
+
         exp_config, tokenizer, processor, model = load_model_from_hf(
             model_path=model_path,
             base_model_path=self.base_model_path,
@@ -86,11 +82,11 @@ class RBMModel(Infer):
 
         logger.info(f"Model type: {'ReWiND' if self.is_rewind else 'RBM'}")
 
-
         logger.info(f"Model loaded successfully on device: {self.device}")
 
     def _add_vision_content_to_list(
-        self, content_list: List[Dict], frames_or_video: Union[List, str], content_extras: dict) -> None:
+        self, content_list: list[dict], frames_or_video: list | str, content_extras: dict
+    ) -> None:
         """
         Add vision content (images or video) to a content list.
 
@@ -102,24 +98,28 @@ class RBMModel(Infer):
         if self.use_multi_image:
             # Add each image as a separate entry
             for img in frames_or_video:
-                content_list.append({
-                    "type": "image",
-                    "image": img,
-                    **content_extras,
-                })
+                content_list.append(
+                    {
+                        "type": "image",
+                        "image": img,
+                        **content_extras,
+                    }
+                )
                 # Add per-frame progress token after each frame if enabled
                 if self.use_per_frame_progress_token:
                     content_list.append({"type": "text", "text": "<|prog_token|>"})
         else:
             # Add video entry
-            content_list.append({
-                "type": "video",
-                "video": frames_or_video,
-                "sample_fps": 1.0,
-                **content_extras,
-            })
-   
-    def _prepare_frames_for_conversation(self, frames: List, prefix: str = "tmp") -> tuple[Union[List, str], dict]:
+            content_list.append(
+                {
+                    "type": "video",
+                    "video": frames_or_video,
+                    "sample_fps": 1.0,
+                    **content_extras,
+                }
+            )
+
+    def _prepare_frames_for_conversation(self, frames: list, prefix: str = "tmp") -> tuple[list | str, dict]:
         """
         Prepare frames for conversation based on use_multi_image flag.
 
@@ -166,7 +166,6 @@ class RBMModel(Infer):
             # Default: return frames as-is
             return frames, {}
 
-
     def compute_progress(
         self,
         frames_array: list | Any | np.ndarray,
@@ -200,19 +199,19 @@ class RBMModel(Infer):
             }
         ]
         text = self.processor.apply_chat_template(
-                    message,
-                    tokenize=False,
-                    add_generation_prompt=False,
-                    add_vision_id=True,
-                    enable_thinking=False,
-                    fps=1,
-                )
+            message,
+            tokenize=False,
+            add_generation_prompt=False,
+            add_vision_id=True,
+            enable_thinking=False,
+            fps=1,
+        )
         image_inputs, video_inputs, video_kwargs = process_vision_info(
-                [message],
-                image_patch_size=16,
-                return_video_kwargs=True,
-                return_video_metadata=True,
-            )
+            [message],
+            image_patch_size=16,
+            return_video_kwargs=True,
+            return_video_metadata=True,
+        )
         # Split videos and metadata (video_inputs is list of (video, video_metadata) tuples)
         if video_inputs is not None:
             videos, video_metadatas = zip(*video_inputs, strict=True)
@@ -222,28 +221,26 @@ class RBMModel(Infer):
             video_metadatas = None
 
         inputs = self.processor(
-                text=[text],
-                images=image_inputs,
-                videos=videos,
-                video_metadata=video_metadatas,
-                padding=True,
-                return_tensors="pt",
-                do_resize=False,  # qwen-vl-utils already resized
-                **video_kwargs,
-            )
+            text=[text],
+            images=image_inputs,
+            videos=videos,
+            video_metadata=video_metadatas,
+            padding=True,
+            return_tensors="pt",
+            do_resize=False,  # qwen-vl-utils already resized
+            **video_kwargs,
+        )
 
         inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
 
-    
-
         # Faster than torch.no_grad() for inference-only code
-        with torch.inference_mode(): 
+        with torch.inference_mode():
             model_output, _ = self.model(
-                    **inputs,
-                    sample_type="progress",
-                    max_new_tokens=self.max_new_tokens,
-                    do_sample=False,  # Deterministic
-                )
+                **inputs,
+                sample_type="progress",
+                max_new_tokens=self.max_new_tokens,
+                do_sample=False,  # Deterministic
+            )
 
         # Extract progress logits
         progress_logits = model_output.progress_logits
@@ -289,14 +286,14 @@ class RBMModel(Infer):
 
     def compute_batch_progress(
         self,
-        frames_array: List[np.ndarray],
-        task_description: List[str],
-        reference_video_path: List[str],
-    ) -> list[List[float]]:
+        frames_array: list[np.ndarray],
+        task_description: list[str],
+        reference_video_path: list[str],
+    ) -> list[list[float]]:
         """Compute progress prediction for a trajectory.
 
         Args:
-            frames_array: List of frames 
+            frames_array: List of frames
             task_description: Task description text
 
         Returns:
@@ -304,11 +301,10 @@ class RBMModel(Infer):
         """
         if frames_array is None:
             return [[]]
-        
+
         all_messages = []
 
         for frame_array in frames_array:
-            
             frames_pil = convert_frames_to_pil_images(frame_array)
 
             video_field, content_extras = self._prepare_frames_for_conversation(frames_pil, prefix="tmp_progress")
@@ -325,25 +321,25 @@ class RBMModel(Infer):
                 }
             ]
             all_messages.append(message)
-        
+
         text = [
             self.processor.apply_chat_template(
-                    message,
-                    tokenize=False,
-                    add_generation_prompt=False,
-                    add_vision_id=True,
-                    enable_thinking=False,
-                    fps=1,
-                ) 
+                message,
+                tokenize=False,
+                add_generation_prompt=False,
+                add_vision_id=True,
+                enable_thinking=False,
+                fps=1,
+            )
             for message in all_messages
         ]
 
         image_inputs, video_inputs, video_kwargs = process_vision_info(
-                all_messages,
-                image_patch_size=16,
-                return_video_kwargs=True,
-                return_video_metadata=True,
-            )
+            all_messages,
+            image_patch_size=16,
+            return_video_kwargs=True,
+            return_video_metadata=True,
+        )
         # Split videos and metadata (video_inputs is list of (video, video_metadata) tuples)
         if video_inputs is not None:
             videos, video_metadatas = zip(*video_inputs, strict=True)
@@ -353,30 +349,26 @@ class RBMModel(Infer):
             video_metadatas = None
 
         inputs = self.processor(
-                text=text,
-                images=image_inputs,
-                videos=videos,
-                video_metadata=video_metadatas,
-                padding=True,
-                return_tensors="pt",
-                do_resize=False,  # qwen-vl-utils already resized
-                **video_kwargs,
-            )
+            text=text,
+            images=image_inputs,
+            videos=videos,
+            video_metadata=video_metadatas,
+            padding=True,
+            return_tensors="pt",
+            do_resize=False,  # qwen-vl-utils already resized
+            **video_kwargs,
+        )
 
-        inputs = {
-            k: v.to(self.device) if isinstance(v, torch.Tensor) else v for k, v in inputs.items()
-        }
-
-    
+        inputs = {k: v.to(self.device) if isinstance(v, torch.Tensor) else v for k, v in inputs.items()}
 
         # Faster than torch.no_grad() for inference-only code
-        with torch.inference_mode(): 
+        with torch.inference_mode():
             model_output, _ = self.model(
-                    **inputs,
-                    sample_type="progress",
-                    max_new_tokens=self.max_new_tokens,
-                    do_sample=False,  # Deterministic
-                )
+                **inputs,
+                sample_type="progress",
+                max_new_tokens=self.max_new_tokens,
+                do_sample=False,  # Deterministic
+            )
 
         # Extract progress logits
         progress_logits = model_output.progress_logits
@@ -397,7 +389,6 @@ class RBMModel(Infer):
         results = []
 
         for i in range(batch_size):
-        
             progress_values = convert_bins_to_continuous(progress_tensor[i]).cpu().tolist()
             # Ensure we have the right length
             if isinstance(progress_values, float):
@@ -407,34 +398,34 @@ class RBMModel(Infer):
 
         return results
 
-    def predict(self, samples: List[EvaluationSample]) -> List[Prediction]:
+    def predict(self, samples: list[EvaluationSample]) -> list[Prediction]:
 
         result = []
-      
+
         if not isinstance(samples[0], ProgressSample):
             raise TypeError(f"{self.config.name} only supports progress samples")
         reference_paths = [sample.trajectory.metadata.get("reference_video_path") for sample in samples]
         values = self.compute_batch_progress(
-                    [np.asarray(sample.trajectory.frames) for sample in samples],
-                    [sample.trajectory.task for sample in samples],
-                    [str(reference_path) if reference_path else None for reference_path in reference_paths],
+            [np.asarray(sample.trajectory.frames) for sample in samples],
+            [sample.trajectory.task for sample in samples],
+            [str(reference_path) if reference_path else None for reference_path in reference_paths],
         )
-          
+
         if len(values) != len(samples):
             raise ValueError("input length must same as output")
-        for value, sample in zip(values, samples):
+        for value, sample in zip(values, samples, strict=False):
             expected = len(sample.trajectory.frames)
             if len(value) != expected:
                 raise ValueError(f"Progress length mismatch: expected {expected}, got {len(value)}")
             if not np.isfinite(value).all():
                 raise ValueError("Progress values must be finite")
-            
+
             result.append(
                 ProgressPrediction(
-                sample_id=sample.sample_id,
-                progress=value,
-                model=self.config.model_id or self.config.model_path or self.config.name,
-                model_version=self.config.model_version,
+                    sample_id=sample.sample_id,
+                    progress=value,
+                    model=self.config.model_id or self.config.model_path or self.config.name,
+                    model_version=self.config.model_version,
                 )
             )
-        return result 
+        return result

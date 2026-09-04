@@ -149,7 +149,7 @@ def convert_mit_franka_prank_dataset_to_hf(
     metadata_files = list(video_dir.glob("*_metadata.json"))
 
     for metadata_file in metadata_files:
-        with open(metadata_file, "r") as f:
+        with open(metadata_file) as f:
             episodes = json.load(f)
             all_episodes.extend(episodes)
 
@@ -171,10 +171,7 @@ def convert_mit_franka_prank_dataset_to_hf(
         # Parallel processing
         from multiprocessing import Pool
 
-        args_list = [
-            (episode, str(video_dir), output_dir, dataset_name, max_frames, fps)
-            for episode in all_episodes
-        ]
+        args_list = [(episode, str(video_dir), output_dir, dataset_name, max_frames, fps) for episode in all_episodes]
 
         with Pool(processes=num_workers) as pool:
             results = list(

@@ -16,13 +16,14 @@ from typing import Any
 
 import h5py
 import numpy as np
+from datasets import Dataset
+from tqdm import tqdm
+
 from dataset_unify.helpers import (
     create_hf_trajectory,
     generate_unique_id,
 )
 from dataset_unify.hf_schema import build_standard_dataset
-from tqdm import tqdm
-from datasets import Dataset
 
 
 class H2RFrameLoader:
@@ -163,7 +164,7 @@ def _process_single_h2r_file(args):
     """
     (
         file_path,
-        folder_name,
+        _folder_name,
         ep_idx,
         dataset_name,
         output_dir,

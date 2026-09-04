@@ -8,7 +8,6 @@ import numpy as np
 
 from dataset_unify.helpers import generate_unique_id
 
-
 CAMERA_DIR_CANDIDATES = [
     "front_rgb",
     "left_shoulder_rgb",
@@ -41,7 +40,7 @@ class RacerFrameListLoader:
 
 
 def _sorted_pngs(dir_path: Path) -> list[str]:
-    paths = [p for p in dir_path.glob("*.png")]
+    paths = list(dir_path.glob("*.png"))
     paths.sort(key=lambda x: int(x.stem.split("_")[0]))
     return [str(p) for p in paths]
 
@@ -115,7 +114,7 @@ def load_racer_dataset(dataset_path: str, dataset_name: str) -> dict[str, list[d
                 continue
 
             try:
-                with open(json_path, "r") as f:
+                with open(json_path) as f:
                     desc = json.load(f)
             except Exception:
                 continue
@@ -129,7 +128,7 @@ def load_racer_dataset(dataset_path: str, dataset_name: str) -> dict[str, list[d
                 continue
 
             # Success: use full length per view
-            for cam, img_list in views.items():
+            for _cam, img_list in views.items():
                 if not img_list:
                     continue
                 expert_img_list = [p for p in img_list if "expert" in p]
@@ -151,20 +150,20 @@ def load_racer_dataset(dataset_path: str, dataset_name: str) -> dict[str, list[d
                     continue
 
                 # Enumerate augmentations; select those labeled as heuristic failures
-                has_failure = False
+                failure_image_name = None
                 for aug_image_name, aug_content in aug.items():
                     if not isinstance(aug_content, dict):
                         continue
                     label = str(aug_content.get("label", "")).lower()
                     if "failure" in label:  # e.g., 'recoverable_failure'
-                        has_failure = True
+                        failure_image_name = aug_image_name
                         break
 
-                if not has_failure:
+                if failure_image_name is None:
                     continue
 
                 # Build failure trajectories by truncating expert frames up to expert_frame_idx
-                for cam, img_list in views.items():
+                for _cam, img_list in views.items():
                     if not img_list:
                         continue
 
@@ -179,7 +178,7 @@ def load_racer_dataset(dataset_path: str, dataset_name: str) -> dict[str, list[d
                     subset = [p for p in img_list if _frame_num(p) < expert_frame_idx and "expert" in p]
                     # add the augmented failure frame
                     for img_name in img_list:
-                        if aug_image_name in img_name:
+                        if failure_image_name in img_name:
                             subset.append(img_name)
                             break
                     if not subset:

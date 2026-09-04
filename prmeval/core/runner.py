@@ -6,8 +6,8 @@ import sys
 from collections import Counter
 from collections.abc import Iterable
 from pathlib import Path
-from typing import TypeVar
 from statistics import mean
+from typing import TypeVar
 
 from tqdm import tqdm
 
@@ -353,7 +353,7 @@ class Evaluator:
             iter_sampler_samples(samplers),
             description=f"Stage 1-2/3 Sample and infer (skipped={len(completed)})",
             unit="sample",
-            total=mean([sampler.pool_size for sampler in samplers])
+            total=mean([sampler.pool_size for sampler in samplers]),
         )
         infer = None
         for sample_batch in batched(samples, self.config.infer.batch_size):

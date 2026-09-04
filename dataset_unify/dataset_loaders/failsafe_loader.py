@@ -13,7 +13,7 @@ from dataset_unify.helpers import generate_unique_id
 TASK_TO_INSTRUCTION = {
     "FailPickCube-v1": "Pick up the red cube",
     "FailPushCube-v1": "Push and move a cube to a goal region in front of it",
-    "FailStackCube-v1": "Pick up a red cube and stack it on top of a green cube and let go of the cube without it falling",
+    "FailStackCube-v1": "Pick up a red cube and stack it on top of a green cube and let go of the cube without it falling",  # noqa: E501
 }
 
 
@@ -107,7 +107,7 @@ def _gather_sub_episodes_from_json(dataset_root: Path, view: str) -> list[dict]:
     json_files = glob.glob(str(json_dir / "vla_data_*.json"))
     for jf in sorted(json_files):
         try:
-            with open(jf, "r") as f:
+            with open(jf) as f:
                 data = json.load(f)
         except Exception:
             continue
@@ -187,7 +187,7 @@ def load_failsafe_dataset(dataset_path: str) -> dict[str, list[dict]]:
         task_data_paired[task] = failed_trajectories + successful_trajectories
 
     print(
-        f"Found {len(task_data_paired)} tasks with both failed and successful trajectories from originally {len(task_data)} tasks"
+        f"Found {len(task_data_paired)} tasks with both failed and successful trajectories from originally {len(task_data)} tasks"  # noqa: E501
     )
 
     # print how many failed and successful trajectories there are

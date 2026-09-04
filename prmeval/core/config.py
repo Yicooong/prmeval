@@ -68,7 +68,7 @@ class SamplingConfig(BaseModel):
     progress_type: Literal["absolute_first_frame", "absolute_wrt_total_frames", "relative_first_frame"] = (
         "absolute_first_frame"
     )
-    
+
     num_examples_per_quality: int | None = Field(default=5, ge=1)
     num_partial_successes: int | None = Field(default=None, ge=1)
     max_tasks: int | None = Field(default=None, ge=1)

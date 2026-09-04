@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 from __future__ import annotations
+
 from collections import defaultdict
 from pathlib import Path
-from typing import Iterable
 
-import numpy as np
 import cv2
+import numpy as np
 
 from dataset_unify.helpers import generate_unique_id
 
@@ -111,7 +111,7 @@ def load_utd_so101_dataset(
         root = root / "koch_arm_ut_dallas"
 
     # Find all MP4 files
-    video_files = sorted([p for p in root.glob("*.mp4")])
+    video_files = sorted(root.glob("*.mp4"))
     if not video_files:
         raise ValueError(f"No MP4 files found in {root}")
 
@@ -124,7 +124,7 @@ def load_utd_so101_dataset(
             break
 
         try:
-            task_key, optimality_key, demo_idx = _parse_video_metadata(video_path.name)
+            task_key, optimality_key, _demo_idx = _parse_video_metadata(video_path.name)
         except ValueError as e:
             print(f"⚠️  Skipping {video_path.name}: {e}")
             continue
