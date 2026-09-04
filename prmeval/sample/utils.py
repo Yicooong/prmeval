@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import tempfile
 from pathlib import Path
@@ -13,13 +14,9 @@ from ..core.schemas import Trajectory
 
 
 def load_hf_trajectory_pool(config: SamplingConfig) -> list[Trajectory]:
-    """Load explicitly successful trajectories from local Hugging Face Datasets."""
-    try:
-        from datasets import Dataset, DatasetDict, Video, load_from_disk
-    except ImportError as exc:
-        raise RuntimeError("Sampling requires the 'data' extra (huggingface datasets)") from exc
+    """Load explicitly successful trajectories from JSONL files or local Hugging Face Datasets."""
     if not config.paths:
-        raise ValueError("sampling.paths must contain at least one local Hugging Face dataset path")
+        raise ValueError("sampling.paths must contain at least one JSONL file or local Hugging Face dataset path")
 
     def _is_successful_trajectory(trajectory: Trajectory) -> bool:
         if trajectory.quality_label not in (None, "successful"):
@@ -57,16 +54,47 @@ def load_hf_trajectory_pool(config: SamplingConfig) -> list[Trajectory]:
             preference_group_id=item.get("preference_group_id"),
             preference_rank=item.get("preference_rank"),
             metadata=item.get("metadata") or {},
-            num_frames_total=item.get("num_frames"),
+            frame_indices=item.get("frame_indices"),
+            num_frames_total=item.get("num_frames_total", item.get("num_frames")),
             target_progress=item.get("target_progress"),
             is_simulation=bool(item.get("is_simulation", False)),
         )
+
+    def _load_jsonl(path: Path):
+        with path.open(encoding="utf-8") as handle:
+            for line_number, line in enumerate(handle, start=1):
+                if not line.strip():
+                    continue
+                try:
+                    item = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    raise ValueError(f"Invalid JSON in {path} at line {line_number}: {exc.msg}") from exc
+                if not isinstance(item, dict):
+                    raise ValueError(f"Expected a JSON object in {path} at line {line_number}")
+                yield item
 
     trajectories: list[Trajectory] = []
     for configured_path in config.paths:
         dataset_path = Path(configured_path).expanduser().resolve()
         if not dataset_path.exists():
-            raise FileNotFoundError(f"Local Hugging Face dataset not found: {dataset_path}")
+            raise FileNotFoundError(f"Trajectory source not found: {dataset_path}")
+
+        if dataset_path.is_file():
+            if dataset_path.suffix.lower() != ".jsonl":
+                raise ValueError(f"Trajectory file must use the .jsonl extension: {dataset_path}")
+            for item in _load_jsonl(dataset_path):
+                trajectory = _trajectory_from_mapping(item, dataset_path.parent)
+                if not _is_successful_trajectory(trajectory):
+                    continue
+                trajectories.append(trajectory)
+                if config.max_trajectories and len(trajectories) >= config.max_trajectories:
+                    return trajectories
+            continue
+
+        try:
+            from datasets import Dataset, DatasetDict, Video, load_from_disk
+        except ImportError as exc:
+            raise RuntimeError("Hugging Face dataset sampling requires the 'data' extra") from exc
         loaded = load_from_disk(str(dataset_path), keep_in_memory=False)
         datasets = loaded.values() if isinstance(loaded, DatasetDict) else [loaded]
         for dataset in datasets:

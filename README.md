@@ -42,7 +42,8 @@ pip install -e '.[local-hf,local-qwen]'
 
 仓库提供了调用通用远程模型 `openai_compatible` 的端到端冒烟配置
 [`configs/eval/openai_compatible_remote.yaml`](configs/eval/openai_compatible_remote.yaml)。运行前设置 OpenAI-compatible
-服务信息，并将配置中的 `sampling.paths` 改为由 `datasets.save_to_disk()` 保存的本地 Dataset 目录：
+服务信息，并将配置中的 `sampling.paths` 改为轨迹 JSONL 文件，或由 `datasets.save_to_disk()` 保存的本地
+Dataset 目录：
 
 ```bash
 export API_KEY='your-api-key'
@@ -93,7 +94,7 @@ prmeval list-metrics
 - [三阶段评测流程](docs/PIPELINE.md)
 - [全流程运行产物说明](docs/ARTIFACTS.md)
 - [EvaluationRecord 数据结构](docs/RECORD_SCHEMA.md)
-- [本地 Hugging Face Dataset](docs/DATASETS.md)
+- [JSONL 与本地 Hugging Face Dataset](docs/DATASETS.md)
 - [原始数据集统一工具](dataset_unify/README.md)
 
 ## 致谢与来源说明

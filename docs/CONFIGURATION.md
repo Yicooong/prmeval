@@ -33,7 +33,7 @@ resume: false
 
 | 配置项 | 使用阶段 | 说明 |
 |---|---|---|
-| `sampling` | Stage 1 | Hugging Face Dataset 路径、采样类型、轨迹与帧数限制 |
+| `sampling` | Stage 1 | JSONL/Hugging Face Dataset 路径、采样类型、轨迹与帧数限制 |
 | `infer` | Stage 2 | baseline 名称、模型/连接信息和扩展参数 |
 | `metrics` | Stage 3 | 需要计算的指标名称列表 |
 | `mode` | `run` 编排 | `separate` 使用磁盘阶段产物；`continue` 在内存中连接采样与推理 |
@@ -48,7 +48,7 @@ resume: false
 | 字段 | 说明 |
 |---|---|
 | `dataset_name` | 写入评测记录的数据集名称，也参与 sample ID 构造 |
-| `paths` | 一个或多个由 `datasets.save_to_disk()` 保存的本地 Dataset 目录 |
+| `paths` | 一个或多个轨迹 `.jsonl` 文件，或由 `datasets.save_to_disk()` 保存的本地 Dataset 目录 |
 | `max_trajectories` | 最多读取的轨迹数 |
 | `eval_types` | 需要构造的评测类型 |
 | `base_frames` | 基准采样帧数；`progress` 等普通采样直接按此数量抽帧 |
@@ -61,7 +61,7 @@ resume: false
 | `trajectories_per_source` | `confusion_matrix` 每个数据来源最多选择的轨迹数 |
 | `temporal_robustness` | `progress_temporal_variation` 的最终帧数上限、变换类型、数量与参数范围 |
 
-相对路径以运行命令时的当前目录为基准。目录结构与字段要求见 [本地 Hugging Face Dataset](DATASETS.md)。
+相对路径以运行命令时的当前目录为基准。路径识别和字段要求见 [JSONL 与本地 Hugging Face Dataset](DATASETS.md)。
 
 ### Synthetic temporal robustness
 

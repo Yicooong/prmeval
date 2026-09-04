@@ -1,17 +1,19 @@
-# 本地 Hugging Face Dataset
+# JSONL 与本地 Hugging Face Dataset
 
-PRMEval Stage 1 只读取由 `datasets.load_from_disk()` 保存的本地 Hugging Face Dataset，不再提供
-JSONL 数据源或 Dataset Adapter。异构原始数据应先通过独立的 [`dataset_unify`](../dataset_unify/)
-工具转换成统一 Dataset。
+PRMEval Stage 1 可以读取 JSONL 文件，或由 `datasets.load_from_disk()` 保存的本地 Hugging Face Dataset。
+异构原始数据也可以先通过独立的 [`dataset_unify`](../dataset_unify/) 工具转换成统一 Dataset。
 
 ## 配置
 
-`sampling.paths` 中的每一项都必须是一个完整的 Dataset 或 DatasetDict 目录：
+`sampling.paths` 中的每一项可以是 `.jsonl` 文件，也可以是完整的 Dataset 或 DatasetDict 目录；加载器会按
+路径类型自动选择读取方式：
 
 ```yaml
 sampling:
   dataset_name: rbm-1m-ood
-  paths: [/path/to/hf_datasets/rbm-1m-ood]
+  paths:
+    - /path/to/trajectories.jsonl
+    - /path/to/hf_datasets/rbm-1m-ood
   eval_types: [progress]
 ```
 
@@ -19,12 +21,12 @@ sampling:
 
 ## 数据池
 
-`load_hf_trajectory_pool()` 依次读取 `paths`、将 Dataset 行标准化为 `Trajectory`，过滤掉失败、次优、
+`load_hf_trajectory_pool()` 依次读取 `paths`、将 JSONL 或 Dataset 的每行标准化为 `Trajectory`，过滤掉失败、次优、
 部分成功和完全未标注的轨迹，并返回一个遵守 `max_trajectories` 限制的 `list[Trajectory]`。成功轨迹定义为
 `quality_label: successful`，或在质量标签缺失时 `partial_success: 1.0`：
 
 ```text
-local Hugging Face Dataset
+JSONL / local Hugging Face Dataset
     -> EvalSampler.pool
     -> Trajectory
     -> EvalSampler.sample()
@@ -44,7 +46,8 @@ Runner 每次运行只加载一次 Dataset，并把同一个 pool 列表注入�
 - `task`：自然语言任务；
 - `frames`：内嵌数组、NPZ 路径或视频路径。
 
-同时兼容 `frames_video`、`video`、`frames_path` 字段。相对帧路径以所属 Dataset 目录为基准解析。
+JSONL 每个非空行必须是一个 JSON 对象，并代表一个 `Trajectory`。同时兼容 `frames_video`、`video`、
+`frames_path` 字段。相对帧路径以 JSONL 文件所在目录或所属 Dataset 目录为基准解析。
 视频列会尽量以 `Video(decode=False)` 读取，避免 Dataset 在遍历时提前解码；真正抽帧时再由公共帧加载工具
 完成 NPZ 或视频物化。
 

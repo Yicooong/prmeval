@@ -54,7 +54,7 @@ wheel 只收集 `prmeval/` 下的包文件，以及安装所必需的 `*.dist-in
 
 ## 基本用法
 
-先将示例配置中的 `sampling.paths` 改为本地 Hugging Face Dataset 目录，再执行：
+先将示例配置中的 `sampling.paths` 改为轨迹 JSONL 文件或本地 Hugging Face Dataset 目录，再执行：
 
 ```bash
 prmeval run --config configs/eval/openai_compatible_remote.yaml

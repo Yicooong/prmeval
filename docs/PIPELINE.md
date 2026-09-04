@@ -30,7 +30,7 @@ metrics.json + metrics_detail.jsonl
 
 Stage 1 负责：
 
-- 通过 `EvalSampler.pool` 从本地 Hugging Face Dataset 生成统一内部轨迹；
+- 通过 `EvalSampler.pool` 从 JSONL 文件或本地 Hugging Face Dataset 生成统一内部轨迹；
 - 按 eval type 选择轨迹和图像帧；
 - 构造指标真值 `target`；
 - 将帧保存为 NPZ，在 Record 中只保留 `FrameReference`；
@@ -39,7 +39,7 @@ Stage 1 负责：
 内部流程为：
 
 ```text
-EvalSampler.pool (local Hugging Face Dataset)
+EvalSampler.pool (JSONL / local Hugging Face Dataset)
     -> Trajectory
     -> EvalSampler.sample()
     -> ProgressSample / PreferenceSample
