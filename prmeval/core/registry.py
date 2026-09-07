@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from collections.abc import Callable
 from typing import Any, Generic, TypeVar
 
@@ -37,6 +35,6 @@ SAMPLERS: Registry[Any] = Registry("sampler")
 INFERS: Registry[Any] = Registry("infer")
 METRICS: Registry[Any] = Registry("metric")
 
-register_sampler = SAMPLERS.register
-register_infer = INFERS.register
-register_metric = METRICS.register
+register_sampler:Callable = SAMPLERS.register
+register_infer:Callable = INFERS.register
+register_metric:Callable = METRICS.register

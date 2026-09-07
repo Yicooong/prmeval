@@ -4,7 +4,7 @@ import json
 import logging
 import sys
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 from statistics import mean
 from typing import TypeVar
@@ -19,23 +19,19 @@ from .config import EvalConfig
 from .registry import INFERS
 from .schemas import (
     EvaluationRecord,
+    EvaluationSample,
     PreferencePrediction,
     ProgressPrediction,
     ValuePayload,
-    jsonable,
-)
-from .utils import (
-    batched,
-    iter_sampler_samples,
-    load_sample_artifacts,
-    read_jsonl,
+    _clear_non_string_frame_values,
+    load_sample_records,
     record_to_sample,
     sample_to_record,
-    strip_record_frames,
+    save_samples_to_bundle,
     validate_prediction_for_sample,
-    write_metric_details,
-    write_sample_artifacts,
+    write_metric_details_jsonl,
 )
+from .utils import batched, jsonable, read_jsonl
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T")
@@ -52,6 +48,11 @@ class Evaluator:
         self.errors_path = self.output_dir / "errors.jsonl"
         self.metrics_path = self.output_dir / "metrics.json"
         self.metrics_detail_path = self.output_dir / "metrics_detail.jsonl"
+
+    def _iter_sampler_samples(self, samplers: Iterable[EvalSampler]) -> Iterator[EvaluationSample]:
+        """Yield every sample produced by each sampler in order."""
+        for sampler in samplers:
+            yield from sampler.sample()
 
     def _with_progress(
         self,
@@ -214,7 +215,7 @@ class Evaluator:
         logger.info("Stage 1/3 Sample started: %s", destination)
         destination.parent.mkdir(parents=True, exist_ok=True)
         if destination.exists() and self.config.resume:
-            records = load_sample_artifacts(destination)
+            records = load_sample_records(destination)
             counts = Counter(record.evaluation.type for record in records)
             source_ids = {
                 item.source_id for record in records for item in record.input.items if item.source_id is not None
@@ -236,7 +237,7 @@ class Evaluator:
         samplers = self._create_samplers()
         samples = list(
             self._with_progress(
-                iter_sampler_samples(samplers),
+                self._iter_sampler_samples(samplers),
                 description="Stage 1/3 Generate samples",
                 unit="sample",
             )
@@ -245,7 +246,7 @@ class Evaluator:
             raise ValueError(
                 f"Sampling produced no samples for eval types: {', '.join(self.config.sampling.eval_types)}"
             )
-        summary = write_sample_artifacts(
+        summary = save_samples_to_bundle(
             self._with_progress(
                 samples,
                 description="Stage 1/3 Write samples",
@@ -277,7 +278,7 @@ class Evaluator:
             self.predictions_path = destination
             self.errors_path = destination.with_name(f"{destination.stem}.errors.jsonl")
             self.output_dir = destination.parent
-        all_records = load_sample_artifacts(source)
+        all_records = load_sample_records(source)
         load_builtin_infer(self.config.infer.name)
         infer_cls = INFERS.get(self.config.infer.name)
         eval_types = {record.evaluation.type for record in all_records}
@@ -353,7 +354,7 @@ class Evaluator:
         executed = 0
         seen: set[str] = set()
         samples = self._with_progress(
-            iter_sampler_samples(samplers),
+            self._iter_sampler_samples(samplers),
             description=f"Stage 1-2/3 Sample and infer (skipped={len(completed)})",
             unit="sample",
             total=mean([sampler.pool_size for sampler in samplers]),
@@ -372,7 +373,7 @@ class Evaluator:
                     continue
                 record = sample_to_record(sample, self.config.sampling.dataset_name)
                 runtime_samples.append(sample)
-                runtime_records.append(strip_record_frames(record))
+                runtime_records.append(_clear_non_string_frame_values(record))
             if runtime_samples:
                 infer = infer or infer_cls(self.config.infer)
                 records = self._run_inference_batch(infer, runtime_records, runtime_samples)
@@ -458,8 +459,8 @@ class Evaluator:
             "details": str(self.metrics_detail_path),
         }
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        self.metrics_path.write_text(json.dumps(jsonable(summary), indent=2, ensure_ascii=False), encoding="utf-8")
-        write_metric_details(self.metrics_detail_path, records, metrics)
+        self.metrics_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
+        write_metric_details_jsonl(self.metrics_detail_path, records, metrics)
         logger.info(
             "Stage 3/3 Metrics completed: %d metrics from %d predictions",
             len(metrics),

@@ -9,7 +9,8 @@ from pathlib import Path
 from .core.config import EvalConfig
 from .core.registry import INFERS, METRICS, SAMPLERS
 from .core.runner import Evaluator
-from .core.schemas import EvaluationRecord, jsonable
+from .core.schemas import EvaluationRecord
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="prmeval", description="Local and remote robot reward evaluation")
@@ -101,9 +102,9 @@ def main(argv: list[str] | None = None) -> int:
         trajectories = load_hf_trajectory_pool(config.sampling)
         print(json.dumps({"valid": True, "trajectories": len(trajectories)}, indent=2))
     elif args.command == "validate-samples":
-        from .core.utils import validate_sample_artifacts
+        from .core.schemas import validate_sample_bundle
 
-        print(json.dumps(validate_sample_artifacts(Path(args.samples)), indent=2, ensure_ascii=False))
+        print(json.dumps(validate_sample_bundle(Path(args.samples)), indent=2, ensure_ascii=False))
     elif args.command == "validate-predictions":
         source = Path(args.predictions)
         records = _load_records(source)
@@ -143,7 +144,7 @@ def main(argv: list[str] | None = None) -> int:
             "num_records": len(records),
             "metrics": compute_metrics(records, metric_names),
         }
-        rendered = json.dumps(jsonable(payload), indent=2, ensure_ascii=False)
+        rendered = json.dumps(payload, indent=2, ensure_ascii=False)
         if args.output:
             output = Path(args.output)
             output.parent.mkdir(parents=True, exist_ok=True)

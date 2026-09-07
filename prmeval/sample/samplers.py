@@ -16,7 +16,8 @@ from ..core.config import SamplingConfig
 from ..core.registry import SAMPLERS, register_sampler
 from ..core.schemas import PreferenceSample, ProgressSample, Trajectory
 from .progress import compute_target_progress, linspace_indices, transform_indices
-from .utils import load_frames, load_hf_trajectory_pool
+from .utils import  load_hf_trajectory_pool
+from prmeval.utils import load_frames
 
 logger = logging.getLogger(__name__)
 
