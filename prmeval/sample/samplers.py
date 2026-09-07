@@ -12,12 +12,13 @@ from typing import ClassVar
 
 import numpy as np
 
-from ..core.config import SamplingConfig
-from ..core.registry import SAMPLERS, register_sampler
-from ..core.schemas import PreferenceSample, ProgressSample, Trajectory
-from .progress import compute_target_progress, linspace_indices, transform_indices
-from .utils import  load_hf_trajectory_pool
+from prmeval.core.config import SamplingConfig
+from prmeval.core.registry import register_sampler
+from prmeval.core.schemas import PreferenceSample, ProgressSample, Trajectory
 from prmeval.utils import load_frames
+
+from .progress import compute_target_progress, linspace_indices, transform_indices
+from .utils import load_hf_trajectory_pool
 
 logger = logging.getLogger(__name__)
 
@@ -343,10 +344,3 @@ class QualityPreferenceSampler(EvalSampler):
                 rejected_trajectory=self._subset_trajectory(rejected, rejected_frames, rejected_indices),
                 eval_type=self.eval_type,
             )
-
-
-def create_samplers(
-    config: SamplingConfig,
-    pool: list[Trajectory] | None = None,
-) -> list[EvalSampler]:
-    return [SAMPLERS.get(eval_type)(config, config.dataset_name, pool=pool) for eval_type in config.eval_types]

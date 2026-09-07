@@ -14,10 +14,12 @@ from tqdm import tqdm
 from ..infer.base import Infer
 from ..infer.baselines import load_builtin_infer
 from ..metrics.builtins import compute_metrics
-from ..sample import EvalSampler, create_samplers, load_hf_trajectory_pool
-from .config import EvalConfig
-from .registry import INFERS
+from prmeval.sample.utils import load_hf_trajectory_pool
+from prmeval.sample.samplers import EvalSampler
+from .config import EvalConfig, SamplingConfig
+from .registry import INFERS, SAMPLERS
 from .schemas import (
+    Trajectory,
     EvaluationRecord,
     EvaluationSample,
     PreferencePrediction,
@@ -35,6 +37,12 @@ from .utils import batched, jsonable, read_jsonl
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T")
+
+def create_samplers(
+    config: SamplingConfig,
+    pool: list[Trajectory] | None = None,
+) -> list[EvalSampler]:
+    return [SAMPLERS.get(eval_type)(config, config.dataset_name, pool=pool) for eval_type in config.eval_types]
 
 
 class Evaluator:

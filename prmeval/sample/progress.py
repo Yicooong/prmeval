@@ -7,7 +7,7 @@ from typing import Any
 
 import numpy as np
 
-from ..core.config import TemporalRobustnessConfig
+from prmeval.core.config import TemporalRobustnessConfig
 
 
 def compute_target_progress(
@@ -39,10 +39,6 @@ def compute_target_progress(
     if progress_type == "relative_first_frame":
         return np.diff(np.asarray([0.0, *absolute], dtype=float)).tolist()
     return [float(v) for v in absolute]
-
-
-# Backward-compatible name used by existing callers and tests.
-compute_progress = compute_target_progress
 
 
 def linspace_indices(length: int, max_frames: int) -> list[int]:

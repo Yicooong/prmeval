@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+
 import numpy as np
 
-from ..core.config import SamplingConfig
-from ..core.schemas import Trajectory
+from prmeval.core.config import SamplingConfig
+from prmeval.core.schemas import Trajectory
 
 
 def load_hf_trajectory_pool(config: SamplingConfig) -> list[Trajectory]:
@@ -109,5 +110,3 @@ def load_hf_trajectory_pool(config: SamplingConfig) -> list[Trajectory]:
                 if config.max_trajectories and len(trajectories) >= config.max_trajectories:
                     return trajectories
     return trajectories
-
-
