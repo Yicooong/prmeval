@@ -12,6 +12,7 @@ from typing import TypeVar
 from tqdm import tqdm
 
 from ..infer.base import Infer
+from ..infer.baselines import load_builtin_infer
 from ..metrics.builtins import compute_metrics
 from ..sample import EvalSampler, create_samplers, load_hf_trajectory_pool
 from .config import EvalConfig
@@ -277,6 +278,7 @@ class Evaluator:
             self.errors_path = destination.with_name(f"{destination.stem}.errors.jsonl")
             self.output_dir = destination.parent
         all_records = load_sample_artifacts(source)
+        load_builtin_infer(self.config.infer.name)
         infer_cls = INFERS.get(self.config.infer.name)
         eval_types = {record.evaluation.type for record in all_records}
         required = {"preference" if eval_type == "quality_preference" else "progress" for eval_type in eval_types}
@@ -337,6 +339,7 @@ class Evaluator:
         """Sample and infer in bounded batches without materializing Stage-1 artifacts."""
         logger.info("Stage 1/3 Sample started: in-memory continuous pipeline")
         samplers = create_samplers(self.config.sampling)
+        load_builtin_infer(self.config.infer.name)
         infer_cls = INFERS.get(self.config.infer.name)
         eval_types = [sampler.eval_type for sampler in samplers]
         required = {"preference" if eval_type == "quality_preference" else "progress" for eval_type in eval_types}

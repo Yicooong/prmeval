@@ -1,23 +1,23 @@
 # Copyright (c) 2025 Robotics and AI Institute LLC dba RAI Institute. All rights reserved.
 
+from __future__ import annotations
+
 import base64
 import io
 import json
 import logging
 import re
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import cv2
-import matplotlib
 import numpy as np
-import torch
 from PIL import Image
 
 from .constants import QUESTION_TEMPLATE, SYSTEM_PROMPT_TEMPLATE
 
-matplotlib.use("Agg")  # Set non-interactive backend for headless rendering
-import matplotlib.pyplot as plt
-from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
+if TYPE_CHECKING:
+    import torch
 
 VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".webm", ".m4v"}
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif", ".webp"}
@@ -182,7 +182,11 @@ def decode_and_validate_image(image: np.ndarray | torch.Tensor | bytes) -> np.nd
     if isinstance(image, bytes):
         # Decode image bytes.
         image = decode_compressed_image(np.frombuffer(image, dtype=np.uint8))
-    if isinstance(image, torch.Tensor):
+    try:
+        import torch
+    except ImportError:
+        torch = None
+    if torch is not None and isinstance(image, torch.Tensor):
         # Torch into numpy.
         image = image.detach().cpu().numpy()
     if isinstance(image, np.ndarray):
@@ -390,6 +394,12 @@ def create_video_with_plot(
         wrap_width: Character width for text wrapping in the description panel.
         font_scale: Font scale for the description text overlay.
     """
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
+
     plt.rcParams.update({"font.size": 6})
 
     first_frame = frame_list[0]

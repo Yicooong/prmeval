@@ -10,10 +10,6 @@ from .core.config import EvalConfig
 from .core.registry import INFERS, METRICS, SAMPLERS
 from .core.runner import Evaluator
 from .core.schemas import EvaluationRecord, jsonable
-from .core.utils import validate_sample_artifacts
-from .metrics.builtins import compute_metrics
-from .sample import load_hf_trajectory_pool
-
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="prmeval", description="Local and remote robot reward evaluation")
@@ -91,16 +87,22 @@ def _metric_summary_for_stdout(summary: dict) -> dict:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "list-infers":
-        print("\n".join(INFERS.names()))
+        from .infer.baselines import builtin_infer_names
+
+        print("\n".join(sorted(set(INFERS.names()) | set(builtin_infer_names()))))
     elif args.command == "list-samplers":
         print("\n".join(SAMPLERS.names()))
     elif args.command == "list-metrics":
         print("\n".join(METRICS.names()))
     elif args.command == "validate-dataset":
+        from .sample import load_hf_trajectory_pool
+
         config = EvalConfig.from_yaml(args.config)
         trajectories = load_hf_trajectory_pool(config.sampling)
         print(json.dumps({"valid": True, "trajectories": len(trajectories)}, indent=2))
     elif args.command == "validate-samples":
+        from .core.utils import validate_sample_artifacts
+
         print(json.dumps(validate_sample_artifacts(Path(args.samples)), indent=2, ensure_ascii=False))
     elif args.command == "validate-predictions":
         source = Path(args.predictions)
@@ -124,6 +126,8 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
     elif args.command == "compute-metrics":
+        from .metrics.builtins import compute_metrics
+
         configured_source = Path(args.predictions)
         source = configured_source.resolve()
         records = _load_records(source)
