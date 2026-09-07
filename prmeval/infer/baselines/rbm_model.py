@@ -15,9 +15,10 @@ import numpy as np
 import torch
 from qwen_vl_utils import process_vision_info
 
-from ...core.config import InferConfig
-from ...core.registry import register_infer
-from ...core.schemas import EvaluationSample, Prediction, ProgressPrediction, ProgressSample
+from prmeval.core.config import InferConfig
+from prmeval.core.registry import register_infer
+from prmeval.core.schemas import EvaluationSample, Prediction, ProgressPrediction, ProgressSample
+
 from ..base import Infer
 from .robometer.utils import _resize_pil, convert_bins_to_continuous, convert_frames_to_pil_images, load_model_from_hf
 

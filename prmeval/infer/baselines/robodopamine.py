@@ -23,9 +23,10 @@ import numpy as np
 from PIL import Image
 from tqdm import tqdm
 
-from ...core.config import InferConfig
-from ...core.registry import register_infer
-from ...core.schemas import EvaluationSample, Prediction, ProgressPrediction, ProgressSample
+from prmeval.core.config import InferConfig
+from prmeval.core.registry import register_infer
+from prmeval.core.schemas import EvaluationSample, Prediction, ProgressPrediction, ProgressSample
+
 from ..base import Infer
 
 # Known model IDs for config / docs

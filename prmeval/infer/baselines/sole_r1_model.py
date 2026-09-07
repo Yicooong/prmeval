@@ -4,9 +4,10 @@ from typing import ClassVar
 
 import numpy as np
 
-from ...core.config import InferConfig
-from ...core.registry import register_infer
-from ...core.schemas import EvaluationSample, Prediction, ProgressPrediction, ProgressSample
+from prmeval.core.config import InferConfig
+from prmeval.core.registry import register_infer
+from prmeval.core.schemas import EvaluationSample, Prediction, ProgressPrediction, ProgressSample
+
 from ..base import Infer
 from .sole_r1.main import InferenceServer
 from .sole_r1.utils import build_payload
