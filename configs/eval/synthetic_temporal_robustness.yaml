@@ -22,6 +22,7 @@ infer:
     max_new_tokens: 128
 
 metrics: [progress_temporal_variation]
+save_samples: false
 output_dir: evaluation_output
 run_name: synthetic-temporal-robustness
 resume: false

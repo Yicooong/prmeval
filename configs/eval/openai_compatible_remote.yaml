@@ -14,7 +14,7 @@ infer:
 
 
 metrics: [progress]
-output_dir: /mnt/shared-storage-user/liuyicong/prmeval/evaluation_output
-run_name: rbm_1m_ood_openai_compatible_reward_alignment
+# output_dir: /mnt/shared-storage-user/xxx/prmeval/evaluation_output
+# run_name: rbm_1m_ood_openai_compatible_reward_alignment
 resume: false
-mode: continue
+save_samples: false

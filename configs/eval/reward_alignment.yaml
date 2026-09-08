@@ -15,6 +15,7 @@ infer:
     max_new_tokens: 128
 
 metrics: [progress]
+save_samples: false
 output_dir: /mnt/shared-storage-user/xxx/evaluation_output
 run_name: rbm_1m_ood_robometer_reward_alignment
 resume: false
