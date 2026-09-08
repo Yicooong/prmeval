@@ -280,3 +280,18 @@ summary = Evaluator(config, show_progress=False).run()
 `load_record_frames(record, bundle_dir)` 获取包含帧数组的记录副本。
 `load_sample_records()` 仍返回包含文件引用的记录, 默认完整校验关联文件。
 此次模块拆分不改变 `bench.record.v1` 协议或 JSONL/NPZ 文件格式。
+
+## 内存中的完整评估
+
+```python
+config = EvalConfig.from_yaml("your_config.yaml")  # YAML 中设置 mode: continue, output_dir: null
+result = Evaluator(config).run()
+progress_details = result["progress"]["details"]
+```
+
+连续模式不设置输出目录时，采样与推理仍按批次执行。成功 Record 去除帧数组后保留在内存中，
+待全部推理完成，再统一校验并调用 `compute_metrics()`，因此跨批次的策略排名分组保持完整。
+内存用量随成功记录的非帧数据增长。每次 `run()` 独立执行，不保存跨调用的阶段状态或续跑检查点。
+
+文件准备和推理记录追加写入由 storage 负责，Record 转换由 conversions 负责；runner 负责
+运行编排及基于成功/失败 ID 的覆盖率统计，具体指标字段仍由 metrics 定义。

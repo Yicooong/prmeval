@@ -37,7 +37,7 @@ resume: false
 | `infer` | Stage 2 | baseline 名称、模型/连接信息和扩展参数 |
 | `metrics` | Stage 3 | 需要计算的指标名称列表 |
 | `mode` | `run` 编排 | `separate` 使用磁盘阶段产物；`continue` 在内存中连接采样与推理 |
-| `output_dir` | 全阶段 | 所有 run 的根目录 |
+| `output_dir` | 全阶段 | 所有 run 的根目录，默认 `null`；`separate` 模式必须显式指定 |
 | `run_name` | 全阶段 | 当前 run 的目录名称 |
 | `resume` | Stage 1/2 | 是否复用兼容产物并跳过已成功样本 |
 
@@ -180,3 +180,18 @@ sample 迭代器没有独立 batch 配置，而是由 `infer.batch_size` 分批�
 时始终使用可移植的磁盘阶段协议。连续模式仍写 predictions、errors 和最终指标，以便审计及按 sample ID 续跑。
 
 不要提交真实 API Key、私有服务地址、生成数据或 `evaluation_output/`。
+
+## 无产物连续评估
+
+设置 `mode: continue` 和 `output_dir: null` 可完全关闭评估产物输出。不新增独立的
+`save_artifacts` 开关。`output_dir` 默认 `null`，在 `continue` 模式下可省略；空字符串或纯空白
+不是关闭开关，会报配置错误。`separate` 模式必须提供非空输出目录。
+
+```yaml
+mode: continue
+output_dir: null
+```
+
+此时 `resume` 和 `run_name` 不生效，每次运行重新推理，不读取历史评估输出。
+输入数据集仍照常读取。该配置用于 `Evaluator.run()` 或 CLI `run`；独立的
+`sample()`、`infer()`、`evaluate_metrics()` 需要输出目录，即使传入显式文件路径也不例外。

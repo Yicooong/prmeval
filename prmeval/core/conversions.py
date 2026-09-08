@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from typing import Any
+
+from .config import InferConfig
 from .schemas import (
     EvaluationRecord,
     EvaluationSample,
@@ -149,3 +152,56 @@ def validate_prediction_for_sample(sample: EvaluationSample, prediction: Predict
         actual = len(prediction.progress)
         if actual != expected:
             raise ValueError(f"Progress length mismatch: expected {expected}, got {actual}")
+
+
+def build_inference_record(
+    source: EvaluationRecord,
+    config: InferConfig,
+    prediction: Prediction | None = None,
+    error: str | None = None,
+    error_response: Any = None,
+) -> EvaluationRecord:
+    """Attach normalized prediction or execution failure to a source record."""
+    normalized = None
+    model = config.model_id or config.model_path or config.name
+    version = config.model_version
+    if isinstance(prediction, ProgressPrediction):
+        model = prediction.model
+        version = prediction.model_version
+        normalized = ValuePayload(
+            kind="progress",
+            values=prediction.progress,
+        )
+    elif isinstance(prediction, PreferencePrediction):
+        model = prediction.model
+        version = prediction.model_version
+        normalized = ValuePayload(
+            kind="preference",
+            label=prediction.preference,
+            probability=prediction.chosen_probability,
+        )
+    payload = source.model_dump()
+    payload.update(
+        {
+            "infer": {
+                "name": config.name,
+                "model": model,
+                "version": version,
+            },
+            "prediction": normalized,
+            "execution": {
+                "status": "error" if error else "success",
+                "error": error,
+                "raw_response": error_response,
+            },
+        }
+    )
+    return EvaluationRecord.model_validate(payload)
+
+
+def clear_non_string_frame_values(record: EvaluationRecord) -> EvaluationRecord:
+    """返回记录副本, 保留字符串形式的 frames, 将数组、结构化引用等非字符串值替换为空列表。"""
+    items = [
+        item if isinstance(item.frames, str) else item.model_copy(update={"frames": []}) for item in record.input.items
+    ]
+    return record.model_copy(update={"input": record.input.model_copy(update={"items": items})})

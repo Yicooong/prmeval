@@ -1,0 +1,10 @@
+{
+  "progress": {
+    "mse": 0.0,
+    "loss": 0.0,
+    "pearson": 1.0,
+    "num_samples": 1,
+    "slices": {"demo:demo_infer": {"mse": 0.0, "pearson": 1.0, "num_samples": 1}},
+    "details": {"sample-1": {"mse": 0.0, "pearson": 1.0, "dataset": "demo", "infer": "demo_infer"}}
+  }
+}

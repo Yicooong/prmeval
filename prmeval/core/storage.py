@@ -13,7 +13,7 @@ from prmeval.utils import load_frames
 
 from .conversions import sample_to_record
 from .schemas import SAMPLE_SCHEMA_VERSION, EvaluationRecord, EvaluationSample, FrameReference, RecordInputItem
-from .utils import _file_sha256, jsonable
+from .utils import _file_sha256, jsonable, read_jsonl
 
 
 def _load_item_frames(item: RecordInputItem, bundle_dir: Path, verify: bool) -> RecordInputItem:
@@ -149,14 +149,6 @@ def write_metric_details_jsonl(path: Path, records: list[EvaluationRecord], metr
             handle.write(json.dumps(jsonable(row), ensure_ascii=False) + "\n")
 
 
-def _clear_non_string_frame_values(record: EvaluationRecord) -> EvaluationRecord:
-    """返回记录副本, 保留字符串形式的 frames, 将数组、结构化引用等非字符串值替换为空列表。"""
-    items = [
-        item if isinstance(item.frames, str) else item.model_copy(update={"frames": []}) for item in record.input.items
-    ]
-    return record.model_copy(update={"input": record.input.model_copy(update={"items": items})})
-
-
 def _save_item_frames(item: RecordInputItem, sample_id: str, bundle_dir: Path) -> RecordInputItem:
     """将一个输入项的帧压缩保存到 sample_frames 目录, 返回以文件引用替代帧内容的输入项副本。"""
     frames = load_frames(item.frames)
@@ -187,3 +179,42 @@ def load_record_frames(record: EvaluationRecord, bundle_dir: Path) -> Evaluation
     """
     items = [_ensure_item_frames_loaded(item, bundle_dir) for item in record.input.items]
     return record.model_copy(update={"input": record.input.model_copy(update={"items": items})})
+
+
+def prepare_inference_outputs(predictions_path: Path, errors_path: Path, *, resume: bool) -> set[str]:
+    """Prepare output files and validate successful checkpoint IDs when resuming."""
+    predictions_path.parent.mkdir(parents=True, exist_ok=True)
+    errors_path.parent.mkdir(parents=True, exist_ok=True)
+    if not resume:
+        predictions_path.write_text("", encoding="utf-8")
+        errors_path.write_text("", encoding="utf-8")
+        return set()
+    records = [EvaluationRecord.model_validate(row) for row in read_jsonl(predictions_path)]
+    if any(not record.execution or record.execution.status != "success" for record in records):
+        raise ValueError(f"Prediction checkpoint contains a non-success record: {predictions_path}")
+    completed = [record.sample_id for record in records]
+    if len(completed) != len(set(completed)):
+        raise ValueError(f"Duplicate successful sample_id found in {predictions_path}")
+    return set(completed)
+
+
+def append_inference_records(records: Iterable[EvaluationRecord], predictions_path: Path, errors_path: Path) -> None:
+    """Append each completed record to its success or error artifact."""
+    grouped = {
+        predictions_path: [],
+        errors_path: [],
+    }
+
+    for record in records:
+        target = errors_path if record.execution and record.execution.status == "error" else predictions_path
+        grouped[target].append(record)
+
+    for target, target_records in grouped.items():
+        if not target_records:
+            continue
+
+        target.parent.mkdir(parents=True, exist_ok=True)
+
+        with target.open("a", encoding="utf-8") as handle:
+            handle.writelines(json.dumps(jsonable(record), ensure_ascii=False) + "\n" for record in target_records)
+            handle.flush()

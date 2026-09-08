@@ -151,8 +151,10 @@ def main(argv: list[str] | None = None) -> int:
             output.write_text(rendered + "\n", encoding="utf-8")
         print(rendered)
     elif args.command == "run":
-        summary = _evaluator(args).run()
-        print(json.dumps(_metric_summary_for_stdout(summary), indent=2))
+        evaluator = _evaluator(args)
+        summary = evaluator.run()
+        payload = summary if evaluator.config.output_dir is None else _metric_summary_for_stdout(summary)
+        print(json.dumps(payload, indent=2))
     elif args.command == "sample":
         summary = _evaluator(args).sample(args.output)
         print(json.dumps(summary, indent=2, ensure_ascii=False))

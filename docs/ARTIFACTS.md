@@ -107,3 +107,16 @@ completed_ids = predictions.jsonl 中的成功 sample_id
 - 重新推理：保留 `samples.jsonl` 和 `sample_frames/`。
 - 重新计算指标：只需 `predictions.jsonl` 和匹配的配置。
 - 审计完整运行：保留整个运行目录，特别是 `errors.jsonl` 和 `metrics_detail.jsonl`。
+
+## 关闭产物输出
+
+`mode: continue` 配合 `output_dir: null` 时，不创建输出目录，也不写入采样帧、
+`samples.jsonl`、`predictions.jsonl`、`errors.jsonl`、`metrics.json` 或 `metrics_detail.jsonl`。
+已有输出不读取、不修改。`Evaluator` 的输出路径属性均为 `None`。
+
+`run()` 直接返回 `compute_metrics()` 的结果：按指标名组织，包含汇总值、逐样本
+`details` 和适用指标的 `task_details`。不包含外层 `metrics`、coverage 或产物路径。
+CLI 也输出完整结果。示例见 [无产物运行示例](../examples/artifact_free/README.md)。
+
+部分失败时仅使用成功记录计算指标；全部失败返回 `{}`，失败信息与数量进入日志。
+采样为空仍报错。指定输出目录时，现有产物与返回格式保持不变。

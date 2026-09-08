@@ -142,9 +142,18 @@ class EvalConfig(BaseModel):
     infer: InferConfig
     metrics: list[str] = Field(default_factory=list)
     mode: Literal["separate", "continue"] = "separate"
-    output_dir: str = "evaluation_output"
+    output_dir: str | None = None
     run_name: str | None = None
     resume: bool = True
+
+    @model_validator(mode="after")
+    def validate_output_dir(self) -> EvalConfig:
+        if self.output_dir is None:
+            if self.mode == "separate":
+                raise ValueError("mode='separate' requires output_dir")
+        elif not self.output_dir.strip():
+            raise ValueError("output_dir must be non-empty; use null for artifact-free continue mode")
+        return self
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> EvalConfig:
