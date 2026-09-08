@@ -102,7 +102,7 @@ def main(argv: list[str] | None = None) -> int:
         trajectories = load_hf_trajectory_pool(config.sampling)
         print(json.dumps({"valid": True, "trajectories": len(trajectories)}, indent=2))
     elif args.command == "validate-samples":
-        from .core.schemas import validate_sample_bundle
+        from .core.storage import validate_sample_bundle
 
         print(json.dumps(validate_sample_bundle(Path(args.samples)), indent=2, ensure_ascii=False))
     elif args.command == "validate-predictions":

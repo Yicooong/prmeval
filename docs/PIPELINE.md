@@ -87,7 +87,8 @@ Stage 2 只接收尚无 `execution` 的 sampled Record。它加载 NPZ 帧，通
 Evaluator.infer()
     -> infer_cls = INFERS.get(config.infer.name)
     -> infer = infer_cls(config.infer)
-    -> record_to_sample(record, bundle_dir)
+    -> runtime_record = load_record_frames(record, bundle_dir)
+    -> record_to_sample(runtime_record)
     -> infer.predict(samples)
     -> list[ProgressPrediction | PreferencePrediction]
     -> EvaluationRecord(execution.status="success|error")
@@ -267,3 +268,15 @@ Python API 默认在交互式 stderr 中显示进度；非交互环境会自动�
 ```python
 summary = Evaluator(config, show_progress=False).run()
 ```
+
+## 核心数据模块
+
+- `prmeval/core/schemas.py`: 数据结构、协议版本和记录自身的状态约束。
+- `prmeval/core/conversions.py`: 样本与记录的字段转换、标准答案生成和预测匹配校验。
+- `prmeval/core/storage.py`: 记录和关联帧文件的保存、加载、文件校验及指标详情输出。
+
+转换函数从 `conversions` 导入, 文件读写函数从 `storage` 导入。
+`record_to_sample(record)` 不再接收目录或读取文件; 调用前使用
+`load_record_frames(record, bundle_dir)` 获取包含帧数组的记录副本。
+`load_sample_records()` 仍返回包含文件引用的记录, 默认完整校验关联文件。
+此次模块拆分不改变 `bench.record.v1` 协议或 JSONL/NPZ 文件格式。

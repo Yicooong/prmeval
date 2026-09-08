@@ -7,8 +7,8 @@ from typing import Any
 
 import numpy as np
 
-from ..core.registry import METRICS, register_metric
-from ..core.schemas import EvaluationRecord
+from prmeval.core.registry import METRICS, register_metric
+from prmeval.core.schemas import EvaluationRecord
 
 
 class Metric(ABC):

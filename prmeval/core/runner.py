@@ -11,32 +11,35 @@ from typing import TypeVar
 
 from tqdm import tqdm
 
-from ..infer.base import Infer
-from ..infer.baselines import load_builtin_infer
-from ..metrics.builtins import compute_metrics
-from prmeval.sample.utils import load_hf_trajectory_pool
+from prmeval.infer.base import Infer
+from prmeval.infer.baselines import load_builtin_infer
+from prmeval.metrics.builtins import compute_metrics
 from prmeval.sample.samplers import EvalSampler
+from prmeval.sample.utils import load_hf_trajectory_pool
+
 from .config import EvalConfig, SamplingConfig
+from .conversions import record_to_sample, sample_to_record, validate_prediction_for_sample
 from .registry import INFERS, SAMPLERS
 from .schemas import (
-    Trajectory,
     EvaluationRecord,
     EvaluationSample,
     PreferencePrediction,
     ProgressPrediction,
+    Trajectory,
     ValuePayload,
+)
+from .storage import (
     _clear_non_string_frame_values,
+    load_record_frames,
     load_sample_records,
-    record_to_sample,
-    sample_to_record,
     save_samples_to_bundle,
-    validate_prediction_for_sample,
     write_metric_details_jsonl,
 )
 from .utils import batched, jsonable, read_jsonl
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T")
+
 
 def create_samplers(
     config: SamplingConfig,
@@ -314,7 +317,8 @@ class Evaluator:
             runtime_samples = []
             for source_record in source_batch:
                 try:
-                    runtime_samples.append(record_to_sample(source_record, source.parent))
+                    runtime_record = load_record_frames(source_record, source.parent)
+                    runtime_samples.append(record_to_sample(runtime_record))
                     runtime_sources.append(source_record)
                 except Exception as exc:
                     record = self._build_inference_record(
