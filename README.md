@@ -64,7 +64,10 @@ prmeval run --config configs/eval/openai_compatible_remote.yaml > summary.json
 prmeval run --config configs/eval/openai_compatible_remote.yaml --no-progress
 ```
 
-也可以单独运行各阶段：
+默认 `save_samples: false`，样本按 batch 直接推理；配置 `output_dir` 保存推理和指标，设为 `null` 则不写产物。
+Python 的 `run()` 始终返回含完整 `metrics`、`coverage` 和路径的字典。
+
+也可以单独运行各阶段。跨进程执行以下命令前，需要在配置中设置 `save_samples: true` 和非空 `output_dir`：
 
 ```bash
 prmeval sample --config configs/eval/openai_compatible_remote.yaml

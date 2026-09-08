@@ -26,6 +26,8 @@ prmeval infer \
   --output evaluation_output/openai-compatible-smoke/predictions.jsonl
 ```
 
-配置加载时会从环境变量展开服务地址和模型 ID。
+配置加载时会从环境变量展开服务地址和模型 ID。`--output` 需要配置非空 `output_dir`；
+指标仍写入配置的运行目录。`save_samples` 不影响读取此输入 bundle。
+如需不落盘推理，设置 `output_dir: null` 并省略 `--output`；CLI 仅输出 summary。
 
 这三组图像只是彩色像素组成的协议测试帧，用于验证 bundle 加载、Base64 图片构造、API 调用、structured output 和结果落盘，不用于评价模型语义能力。

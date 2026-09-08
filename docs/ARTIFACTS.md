@@ -1,6 +1,6 @@
 # 全流程运行产物说明
 
-PRMEval 使用同一个 `bench.record.v1` `EvaluationRecord` 串联三个阶段。分离模式的标准运行目录为：
+PRMEval 使用同一个 `bench.record.v1` `EvaluationRecord` 串联三个阶段。启用全部产物写入时的标准运行目录为：
 
 ```text
 <output_dir>/<run_name-or-default>/
@@ -13,11 +13,11 @@ PRMEval 使用同一个 `bench.record.v1` `EvaluationRecord` 串联三个阶段�
 └── metrics_detail.jsonl
 ```
 
-`mode: continue` 不落盘 Stage 1 产物，因此没有 `samples.jsonl` 和 `sample_frames/`。
+`save_samples: false`（默认）不落盘 Stage 1 产物，因此没有 `samples.jsonl` 和 `sample_frames/`。
 
 ## Stage 1：Sample
 
-Stage 1 输出 `samples.jsonl` 和 `sample_frames/*.npz`。`samples.jsonl` 每行代表一次实际送入 Infer 的请求，
+有输出目录且 `save_samples: true` 时，Stage 1 输出 `samples.jsonl` 和 `sample_frames/*.npz`。`samples.jsonl` 每行代表一次实际送入 Infer 的请求，
 而不是一条原始 trajectory。每行都是尚无 `execution` 的 sampled `EvaluationRecord`，包含稳定的 `sample_id`、
 评测与数据集身份、任务、NPZ 引用、采样索引和 Metric 所需的 `target`。
 
@@ -25,13 +25,14 @@ Stage 1 输出 `samples.jsonl` 和 `sample_frames/*.npz`。`samples.jsonl` 每�
 两个 NPZ。NPZ 路径相对于 `samples.jsonl` 所在目录。加载时会验证路径安全、文件 SHA-256、数组键、帧数，
 以及 progress target 与帧数的长度关系。
 
-`resume: true` 且 `samples.jsonl` 已存在时，Stage 1 验证并直接复用该文件。框架不再生成 sample manifest，
-也不比较采样配置指纹；采样配置变化后应使用新运行目录、删除旧样本，或设置 `resume: false`。
+`sample()` 不读取 `resume`：每次重新加载原始数据并准备 samplers，开启采样落盘时重新生成并覆盖样本文件。
+若要直接使用已有样本，调用 `infer(samples_path=...)`，无需先调用 `sample()`。框架不生成 sample manifest，
+也不比较采样配置指纹；数据、采样或模型配置变化后应使用新运行目录，避免复用不匹配的预测。
 
 ## Stage 2：Infer
 
-Stage 2 读取 `samples.jsonl` 中的每条 sampled Record，加载它引用的 NPZ，执行 Infer，并把补全后的 Record
-追加到对应文件。Stage 1 文件不会被原地修改。
+Stage 2 读取样本文件，或在没有样本文件时消费已准备的 samplers，两者互斥。
+文件来源保留 NPZ 引用，sampler 来源清除帧数组；有输出目录时将补全后的 Record 逐批追加到对应文件。Stage 1 文件不会被原地修改。
 
 - `predictions.jsonl`：只保存成功 Record；增加 `infer`、`prediction` 和成功的 `execution`。
 - `errors.jsonl`：保存失败 Record；`prediction` 为 null，`execution` 包含错误和可选原始响应。
@@ -44,7 +45,7 @@ Stage 2 读取 `samples.jsonl` 中的每条 sampled Record，加载它引用的 
 
 ## Stage 3：Metric
 
-Stage 3 只读取成功的 `predictions.jsonl`，从每条 Record 的 `target` 和 `prediction` 计算指标。它不读取原始
+Stage 3 接收内存成功记录或读取成功的 `predictions.jsonl`，从每条 Record 的 `target` 和 `prediction` 计算指标。它不读取原始
 Dataset、NPZ 或模型。
 
 ### `metrics.json`
@@ -96,10 +97,10 @@ completed_ids = predictions.jsonl 中的成功 sample_id
     sample_id 在 completed_ids 中 -> 跳过
     否则 -> 推理并立即追加成功或错误 Record
 
-读取全部成功 Record -> 重新生成 metrics.json 和 metrics_detail.jsonl
+汇总当前输入范围内的历史成功和本次成功 Record -> 重新生成 metrics.json 和 metrics_detail.jsonl
 ```
 
-`resume: false` 会重新生成 Stage 1 产物，并在 Stage 2 开始时清空 predictions 和 errors。成功结果逐批追加，
+`resume` 只控制 Stage 2；`resume: false` 在推理开始时清空 predictions 和 errors。成功结果逐批追加，
 因此进程中断后，已经完整写入 `predictions.jsonl` 的样本可以继续复用。
 
 ## 最小保留集合
@@ -110,13 +111,13 @@ completed_ids = predictions.jsonl 中的成功 sample_id
 
 ## 关闭产物输出
 
-`mode: continue` 配合 `output_dir: null` 时，不创建输出目录，也不写入采样帧、
-`samples.jsonl`、`predictions.jsonl`、`errors.jsonl`、`metrics.json` 或 `metrics_detail.jsonl`。
-已有输出不读取、不修改。`Evaluator` 的输出路径属性均为 `None`。
+`output_dir: null` 时，不创建输出目录，也不写入采样帧、样本、预测、错误或指标文件。
+输出路径属性均为 `None`；不会读取历史预测检查点，但允许显式读取样本或预测文件。
+`save_samples: true` 不能绕过这个总开关。
 
-`run()` 直接返回 `compute_metrics()` 的结果：按指标名组织，包含汇总值、逐样本
-`details` 和适用指标的 `task_details`。不包含外层 `metrics`、coverage 或产物路径。
-CLI 也输出完整结果。示例见 [无产物运行示例](../examples/artifact_free/README.md)。
+Python 的 `run()` 和 `evaluate_metrics()` 始终返回 `metrics`、`coverage`、`predictions`、`details`。
+`metrics` 包含完整逐样本和逐组明细；CLI 与磁盘 `metrics.json` 只保留聚合指标。
+没有对应文件来源或产物时路径为 `None`。示例见 [无产物运行示例](../examples/artifact_free/README.md)。
 
-部分失败时仅使用成功记录计算指标；全部失败返回 `{}`，失败信息与数量进入日志。
-采样为空仍报错。指定输出目录时，现有产物与返回格式保持不变。
+部分失败时仅使用成功记录计算指标；全部失败返回空 `metrics` 和完整 coverage。
+有输出目录时也会保存这份摘要与空 `metrics_detail.jsonl`。采样为空仍报错。

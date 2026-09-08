@@ -10,6 +10,14 @@
 配置模板为 `configs/eval/openai_compatible_remote.yaml`。先将其中的 `sampling.paths` 改为本地 Hugging Face Dataset
 目录。模板限制最多读取一条 trajectory；实际请求批次数量取决于生成的样本数和 `infer.batch_size`。
 
+先在配置中启用采样落盘，供独立进程的后续阶段读取：
+
+```yaml
+save_samples: true
+output_dir: evaluation_output
+run_name: openai-compatible-remote
+```
+
 ```bash
 export API_KEY='your-key'
 export BASE_URL='https://your-service.example.com/v1'

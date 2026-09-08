@@ -18,14 +18,14 @@ def build_parser() -> argparse.ArgumentParser:
     run = sub.add_parser("run", help="Run an evaluation")
     run.add_argument("--config", required=True)
     run.add_argument("--no-progress", action="store_true", help="Disable terminal progress bars")
-    sample = sub.add_parser("sample", help="Stage 1: sample a dataset into bench.record.v1")
+    sample = sub.add_parser("sample", help="Stage 1: prepare samplers; save a bundle when save_samples is enabled")
     sample.add_argument("--config", required=True)
-    sample.add_argument("--output", help="Optional samples.jsonl destination")
+    sample.add_argument("--output", help="Optional samples.jsonl destination (requires output_dir and save_samples)")
     sample.add_argument("--no-progress", action="store_true", help="Disable terminal progress bars")
     infer = sub.add_parser("infer", help="Stage 2: run a model on sampled data")
     infer.add_argument("--config", required=True)
     infer.add_argument("--samples", help="Optional samples.jsonl source")
-    infer.add_argument("--output", help="Optional predictions.jsonl destination")
+    infer.add_argument("--output", help="Optional predictions.jsonl destination (requires output_dir)")
     infer.add_argument("--no-progress", action="store_true", help="Disable terminal progress bars")
     stage_metrics = sub.add_parser("metrics", help="Stage 3: compute configured metrics")
     stage_metrics.add_argument("--config", required=True)
@@ -153,13 +153,12 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "run":
         evaluator = _evaluator(args)
         summary = evaluator.run()
-        payload = summary if evaluator.config.output_dir is None else _metric_summary_for_stdout(summary)
-        print(json.dumps(payload, indent=2))
+        print(json.dumps(_metric_summary_for_stdout(summary), indent=2))
     elif args.command == "sample":
         summary = _evaluator(args).sample(args.output)
         print(json.dumps(summary, indent=2, ensure_ascii=False))
     elif args.command == "infer":
-        summary = _evaluator(args).infer(args.samples, args.output)
+        summary, _records = _evaluator(args).infer(args.samples, args.output)
         print(json.dumps(summary, indent=2, ensure_ascii=False))
     elif args.command == "metrics":
         summary = _evaluator(args).evaluate_metrics(args.predictions)

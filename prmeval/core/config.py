@@ -141,18 +141,15 @@ class EvalConfig(BaseModel):
     sampling: SamplingConfig = Field(default_factory=SamplingConfig)
     infer: InferConfig
     metrics: list[str] = Field(default_factory=list)
-    mode: Literal["separate", "continue"] = "separate"
+    save_samples: bool = False
     output_dir: str | None = None
     run_name: str | None = None
     resume: bool = True
 
     @model_validator(mode="after")
     def validate_output_dir(self) -> EvalConfig:
-        if self.output_dir is None:
-            if self.mode == "separate":
-                raise ValueError("mode='separate' requires output_dir")
-        elif not self.output_dir.strip():
-            raise ValueError("output_dir must be non-empty; use null for artifact-free continue mode")
+        if self.output_dir is not None and not self.output_dir.strip():
+            raise ValueError("output_dir must be non-empty; use null to disable artifact writes")
         return self
 
     @classmethod

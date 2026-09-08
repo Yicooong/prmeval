@@ -1,9 +1,16 @@
 # Stage 1 sampling 说明
 
-当前 Stage 1 只接受由 `datasets.save_to_disk()` 保存的本地 Hugging Face Dataset，不直接读取 JSONL。
-本目录中的 `trajectories.jsonl` 是旧版测试 fixture；如需继续使用，应先通过 `dataset_unify` 转成标准 Dataset。
+Stage 1 支持轨迹 JSONL 或由 `datasets.save_to_disk()` 保存的本地 Hugging Face Dataset。
 
 将 `configs/eval/openai_compatible_remote.yaml` 中的 `sampling.paths` 改为转换后的 Dataset 目录，然后运行：
+
+先在配置中启用采样落盘，供独立进程的后续阶段读取：
+
+```yaml
+save_samples: true
+output_dir: evaluation_output
+run_name: openai-compatible-remote
+```
 
 ```bash
 export BASE_URL='https://your-service.example.com/v1'

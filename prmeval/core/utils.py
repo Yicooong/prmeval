@@ -22,6 +22,7 @@ def batched(iterable: Iterable[T], batch_size: int) -> Iterator[list[T]]:
     iterator = iter(iterable)
     while batch := list(itertools.islice(iterator, batch_size)):
         yield batch
+        del batch
 
 
 def read_jsonl(path: Path) -> list[dict]:

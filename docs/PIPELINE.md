@@ -1,19 +1,19 @@
 # 三阶段评测流程
 
-PRMEval 将一次评测拆成三个可独立运行和验证的阶段。Stage 1 与 Stage 2 通过 `bench.record.v1` JSONL 协议连接，Stage 3 只读取推理成功的记录。
+PRMEval 将一次评测拆成三个可独立运行和验证的阶段。阶段之间可通过内存传递，也可通过 `bench.record.v1` 文件连接；Stage 3 只使用推理成功的记录。
 
 ```text
 本地 Dataset
     │
     ▼
 Stage 1: sample
-    │  samples.jsonl + sample_frames/*.npz
+    │  samplers 或 samples.jsonl + sample_frames/*.npz
     ▼
 EvaluationRecord
     │
     ▼
 Stage 2: infer
-    │  predictions.jsonl / errors.jsonl
+    │  成功记录；可选写入 predictions.jsonl / errors.jsonl
     ▼
 EvaluationRecord(execution.status="success|error")
     │
@@ -21,14 +21,14 @@ EvaluationRecord(execution.status="success|error")
 Stage 3: metrics
     │
     ▼
-metrics.json + metrics_detail.jsonl
+完整指标；可选写入 metrics.json + metrics_detail.jsonl
 ```
 
 完整字段、必填规则和 JSON 示例见 [EvaluationRecord 数据结构](RECORD_SCHEMA.md)。
 
 ## Stage 1：数据采样
 
-Stage 1 负责：
+Stage 1 准备共享同一 trajectory pool 的 samplers；开启采样落盘时还会流式执行以下采样及写入步骤：
 
 - 通过 `EvalSampler.pool` 从 JSONL 文件或本地 Hugging Face Dataset 生成统一内部轨迹；
 - 按 eval type 选择轨迹和图像帧；
@@ -46,6 +46,8 @@ EvalSampler.pool (JSONL / local Hugging Face Dataset)
     -> EvaluationRecord
     -> samples.jsonl + sample_frames/*.npz
 ```
+
+未开启采样落盘时，实际抽帧和样本生成由 Stage 2 按 batch 消费 sampler 时触发，Stage 1 不提前统计样本数。
 
 当前 v1 不包含 prefix sampling。一条 `sample_id` 对应一次模型请求和一条完整预测曲线。
 
@@ -70,7 +72,7 @@ input item 的 `synthetic_temporal` metadata 中。默认长度限制为基准�
 
 图片不会直接写入 JSONL。移动采样产物时，必须整体移动 `samples.jsonl` 和 `sample_frames/`，以保留相对路径及 SHA-256 校验关系。
 
-运行并验证 Stage 1：
+运行并验证 Stage 1（先设置 `save_samples: true`、`output_dir: evaluation_output` 和 `run_name: openai-compatible-remote`）：
 
 ```bash
 prmeval sample --config configs/eval/openai_compatible_remote.yaml
@@ -80,8 +82,9 @@ prmeval validate-samples \
 
 ## Stage 2：单入口模型推理
 
-Stage 2 只接收尚无 `execution` 的 sampled Record。它加载 NPZ 帧，通过 registry 直接构造具体 baseline，并按
-`infer.batch_size` 分组调用统一的 `predict(samples)`：
+Stage 2 优先读取显式样本文件，其次读取已有的当前/默认样本文件；只有没有文件输入时才消费 `self.samplers`。
+文件来源只接受尚无 `execution` 的 sampled Record，加载 NPZ 帧后转换为 runtime sample，绝不再次采样。
+两种来源共用 batch 推理逻辑，通过 registry 直接构造 baseline，并按 `infer.batch_size` 调用 `predict(samples)`：
 
 ```text
 Evaluator.infer()
@@ -112,14 +115,14 @@ Progress baseline 的 `predict()` 接收样本列表，并为每个样本构造�
 }
 ```
 
-成功结果写入 `predictions.jsonl`；失败结果写入 `errors.jsonl`。一个批次抛出异常，或者返回数量/ID 不合法时，
+有输出目录时，成功结果写入 `predictions.jsonl`；失败结果写入 `errors.jsonl`。一个批次抛出异常，或者返回数量/ID 不合法时，
 该批次的所有样本都会记为失败，后续批次继续执行。成功的 progress prediction 不保存远程 raw response；远程失败可通过
-`RemoteError.raw_response` 写入错误记录。
+异常的 `raw_response` 属性写入错误记录。
 
 `openai_compatible` 在模型实例内部使用官方 OpenAI Python SDK。模型内部需要的 prefix 或 tensor micro-batch 是 baseline
 私有实现细节，与 Runner 的 `infer.batch_size` 分组相互独立。
 
-Stage 2 不会重新抽帧。普通采样的模型输入帧数由 Stage 1 的 `sampling.base_frames` 控制；时序鲁棒样本还会受 `sampling.temporal_robustness.max_frames` 的最终硬上限约束。这样模型输入、target 和 progress prediction 始终一一对应。接口与注册示例见 [Infer 模型接入](INFER_MODELS.md)，连接和模型字段见 [配置文件说明](CONFIGURATION.md#infer)。
+文件输入路径不会重新抽帧；sampler 输入路径在此阶段按需抽帧。普通采样的模型输入帧数由 Stage 1 的 `sampling.base_frames` 控制；时序鲁棒样本还会受 `sampling.temporal_robustness.max_frames` 的最终硬上限约束。这样模型输入、target 和 progress prediction 始终一一对应。接口与注册示例见 [Infer 模型接入](INFER_MODELS.md)，连接和模型字段见 [配置文件说明](CONFIGURATION.md#infer)。
 
 查看已注册 infer：
 
@@ -143,7 +146,7 @@ Stage 3 只读取满足以下条件的记录：
 execution.status = success
 ```
 
-它不读取原始 dataset、不加载 NPZ，也不调用模型。聚合结果写入 `metrics.json`；完整 Record 与逐条指标写入
+它不读取原始 dataset、不加载 NPZ，也不调用模型。有输出目录时，聚合结果写入 `metrics.json`；完整 Record 与逐条指标写入
 `metrics_detail.jsonl`。需要联合多条 Record 的指标还会写入 `detail_type: group` 的分组明细。
 
 当前内置评测包括：
@@ -195,7 +198,7 @@ Stage 1 sample_id -> Stage 2 sample_id -> Stage 3 明细 sample_id
 
 各文件的完整字段、生成条件、自定义输出命名、移动与验证方式见 [全流程运行产物说明](ARTIFACTS.md)。
 
-一次完整运行通常生成：
+有输出目录且 `save_samples: true` 时，完整运行的产物结构为：
 
 ```text
 evaluation_output/<run_name>/
@@ -207,16 +210,15 @@ evaluation_output/<run_name>/
 └── metrics_detail.jsonl
 ```
 
-当 `resume: true` 时：
-
-- Stage 1 验证并复用已有 `samples.jsonl`；
+`resume` 不控制 Stage 1：每次调用 `sample()` 都重新准备 samplers，开启采样落盘时重新生成并覆盖样本文件。
+需要复用已有样本时直接调用 `infer(samples_path=...)`。当 `resume: true` 时：
 - Stage 2 跳过已经成功的 `sample_id`；
 - 失败样本可以在下次运行时重试；
 - Stage 3 根据当前全部成功 Record 重写两个指标文件。
 
 框架不再保存或比较配置指纹。数据、采样配置或模型配置发生变化时，应使用新的 `run_name`，避免向同一目录混写。
 
-运行产物默认位于 `evaluation_output/`，该目录不应提交到 Git。
+示例可将运行产物放在 `evaluation_output/`，该目录不应提交到 Git；配置默认不写产物。
 
 ## 连续执行
 
@@ -226,17 +228,16 @@ evaluation_output/<run_name>/
 prmeval run --config configs/eval/openai_compatible_remote.yaml
 ```
 
-顶层 `mode` 控制 `run` 如何连接三个阶段：
+`run()` 固定依次执行三个阶段，没有 mode 分支。`save_samples` 默认 `false`，
+采样器生成的样本按 batch 直接推理；有输出目录时仍写入 predictions、errors 和 metrics。
+设为 `save_samples: true` 后，Stage 1 保存样本 JSONL 和 NPZ，Stage 2 读取该文件，不再消费 sampler。
+`output_dir: null` 关闭所有评估产物写入，但仍可读取显式输入文件。
 
-- `separate`（默认）依次生成并读取 `samples.jsonl` 与 `sample_frames/*.npz`，适合阶段解耦和移动产物；
-- `continue` 从 sampler 迭代器按 `infer.batch_size` 取样本并直接推理，不生成 sample JSONL、sample manifest 或 NPZ。
+sampler 输入的推理记录会清除帧数组，保留 frame indices、target、source ID 和 metadata；
+文件输入的记录保留原始 NPZ 引用。成功记录在内存中保留，供全部推理完成后统一计算跨 batch 指标。
+断点续跑只返回当前输入范围内的完整成功结果，全部命中时无需加载模型。
 
-连续模式的帧数组只存在于当前推理批次的内存中。写入 predictions/errors 前，Runner 会把
-`input.items[].frames` 置为空列表；frame indices、target、dataset source、source ID 和 metadata 仍会保留。
-连续模式仍将 predictions、errors 和 metrics 写到运行目录，`resume: true` 时重新生成稳定 sample ID 并跳过已有成功预测。单独执行
-`sample`、`infer` 或 `metrics` 不受 `mode` 影响，始终使用磁盘阶段协议。
-
-CLI 默认向 stderr 输出阶段日志，并在交互式终端中展示各阶段进度：Stage 1 统计读取轨迹、生成样本和写入样本，Stage 2 统计已完成的推理样本，Stage 3 统计已计算的指标。断点续跑时，Stage 2 会同时报告待处理和已跳过的样本数。使用 `--no-progress` 可以关闭动态进度条；普通阶段日志不受影响。非交互式 stderr（例如 CI 或输出重定向）会自动禁用动态条，避免产生重复控制字符。
+CLI 默认向 stderr 输出阶段日志，并在交互式终端中展示各阶段进度：Stage 1 准备采样器，启用采样落盘时显示样本生成和写入进度，Stage 2 显示样本消费进度，Stage 3 统计已计算的指标。断点续跑时，Stage 2 完成摘要会报告执行和跳过数量。使用 `--no-progress` 可以关闭动态进度条；普通阶段日志不受影响。非交互式 stderr（例如 CI 或输出重定向）会自动禁用动态条，避免产生重复控制字符。
 
 进度和日志使用 stderr，最终 JSON 摘要使用 stdout。例如下面的命令只将摘要写入文件：
 
@@ -253,7 +254,7 @@ config = EvalConfig.from_yaml("configs/eval/openai_compatible_remote.yaml")
 evaluator = Evaluator(config)
 
 sample_summary = evaluator.sample()
-infer_summary = evaluator.infer()
+infer_summary, successful_records = evaluator.infer()
 metric_summary = evaluator.evaluate_metrics()
 ```
 
@@ -268,6 +269,14 @@ Python API 默认在交互式 stderr 中显示进度；非交互环境会自动�
 ```python
 summary = Evaluator(config, show_progress=False).run()
 ```
+
+`evaluate_metrics(predictions_path=None, *, records=None, coverage=None)` 可接收文件或记录列表，二者不可同时指定。
+未指定输入时优先使用本实例最近一次推理结果；新实例可读取默认预测文件。没有输入则报错，不自动执行前置阶段。
+再次调用 `sample()` 或 `infer()` 会清除旧推理状态；前置阶段失败后不能隐式复用旧指标输入。
+
+`run()` 与 `evaluate_metrics()` 始终返回含 `metrics`、`coverage`、`predictions`、`details` 的字典。
+Python 中 `metrics` 保留完整的 `details` 和 `task_details`；磁盘 metrics.json 和 CLI 只输出精简指标。
+全部推理失败时返回空 `metrics` 和失败 coverage，有输出目录时同时写入摘要及空明细文件。
 
 ## 核心数据模块
 
@@ -284,14 +293,14 @@ summary = Evaluator(config, show_progress=False).run()
 ## 内存中的完整评估
 
 ```python
-config = EvalConfig.from_yaml("your_config.yaml")  # YAML 中设置 mode: continue, output_dir: null
+config = EvalConfig.from_yaml("your_config.yaml")  # YAML 中设置 output_dir: null
 result = Evaluator(config).run()
-progress_details = result["progress"]["details"]
+progress_details = result["metrics"]["progress"]["details"]
 ```
 
-连续模式不设置输出目录时，采样与推理仍按批次执行。成功 Record 去除帧数组后保留在内存中，
+不设置输出目录时，采样与推理仍按批次执行。成功 Record 去除帧数组后保留在内存中，
 待全部推理完成，再统一校验并调用 `compute_metrics()`，因此跨批次的策略排名分组保持完整。
-内存用量随成功记录的非帧数据增长。每次 `run()` 独立执行，不保存跨调用的阶段状态或续跑检查点。
+内存用量随成功记录的非帧数据增长。每次 `run()` 重新准备采样器并执行推理，不读取历史预测检查点；本次结果可供同实例继续调用指标阶段。
 
 文件准备和推理记录追加写入由 storage 负责，Record 转换由 conversions 负责；runner 负责
 运行编排及基于成功/失败 ID 的覆盖率统计，具体指标字段仍由 metrics 定义。

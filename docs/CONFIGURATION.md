@@ -23,7 +23,7 @@ infer:
   options: {}
 
 metrics: [progress]
-mode: separate
+save_samples: false
 output_dir: evaluation_output
 run_name: progress-full-smoke
 resume: false
@@ -36,10 +36,10 @@ resume: false
 | `sampling` | Stage 1 | JSONL/Hugging Face Dataset 路径、采样类型、轨迹与帧数限制 |
 | `infer` | Stage 2 | baseline 名称、模型/连接信息和扩展参数 |
 | `metrics` | Stage 3 | 需要计算的指标名称列表 |
-| `mode` | `run` 编排 | `separate` 使用磁盘阶段产物；`continue` 在内存中连接采样与推理 |
-| `output_dir` | 全阶段 | 所有 run 的根目录，默认 `null`；`separate` 模式必须显式指定 |
+| `save_samples` | Stage 1 | 默认 `false`；设为 `true` 且有输出目录时保存样本 JSONL 和帧 |
+| `output_dir` | 全阶段 | 所有 run 的根目录，默认 `null`，表示不写入任何评估产物 |
 | `run_name` | 全阶段 | 当前 run 的目录名称 |
-| `resume` | Stage 1/2 | 是否复用兼容产物并跳过已成功样本 |
+| `resume` | Stage 2 | 是否复用已有成功预测并跳过已成功样本；不控制采样阶段 |
 
 三个阶段共用一个 `EvalConfig`。只运行 Stage 1 时仍需保留 `infer` 块，但采样阶段不会构造模型。
 
@@ -170,28 +170,45 @@ prmeval list-metrics
 
 ## 输出目录与续跑
 
-产物写入 `<output_dir>/<run_name>/`；未设置 `run_name` 时使用 `default`。`resume: true` 时，Stage 1
-验证并复用已有样本，Stage 2 跳过 `predictions.jsonl` 中已成功的 `sample_id`，失败样本会在下次运行时重试。
-框架不比较配置指纹，因此数据、采样或模型配置改变时必须使用新的 `run_name`。详见
-[三阶段评测流程](PIPELINE.md#运行产物与断点续跑)。
+`run()` 始终调用 `sample()` → `infer()` → `evaluate_metrics()`，不再接受顶层 `mode`。
+迁移旧配置时删除 `mode`；需要可移植采样文件的旧分阶段运行应显式设置 `save_samples: true`。
 
-`mode: continue` 只影响 `run` 命令。它不生成 `samples.jsonl` 或 `sample_frames/*.npz`；
-sample 迭代器没有独立 batch 配置，而是由 `infer.batch_size` 分批消费。独立运行 `sample`、`infer`、`metrics`
-时始终使用可移植的磁盘阶段协议。连续模式仍写 predictions、errors 和最终指标，以便审计及按 sample ID 续跑。
+| 配置 | 样本 JSONL / NPZ | 推理、错误、指标 |
+|---|---|---|
+| `output_dir: null` | 不写入 | 不写入 |
+| 输出目录 + `save_samples: false`（默认） | 不写入 | 写入 |
+| 输出目录 + `save_samples: true` | 写入 | 写入 |
 
-不要提交真实 API Key、私有服务地址、生成数据或 `evaluation_output/`。
+产物写入 `<output_dir>/<run_name-or-default>/`。空字符串或纯空白目录会报错，使用 `null` 关闭写入。
+显式输出路径不能绕过开关：`sample --output` 需要输出目录和 `save_samples: true`，
+`infer --output` 需要输出目录。自定义预测文件的错误文件为同目录下 `<stem>.errors.jsonl`；
+指标仍写入配置的运行目录。
 
-## 无产物连续评估
+`sample()` 每次都重新加载 trajectory pool 并创建 samplers；开启采样落盘时重新生成并覆盖样本文件，与 `resume` 无关。
+`resume: true` 时，Stage 2 仅跳过当前输入中已有成功预测的 sample ID，失败样本重新执行；返回的成功记录和 coverage
+包含当前输入范围内的历史成功结果与本次结果。`resume: false` 清空预测和错误输出并重新推理。
 
-设置 `mode: continue` 和 `output_dir: null` 可完全关闭评估产物输出。不新增独立的
-`save_artifacts` 开关。`output_dir` 默认 `null`，在 `continue` 模式下可省略；空字符串或纯空白
-不是关闭开关，会报配置错误。`separate` 模式必须提供非空输出目录。
+`save_samples` 只控制写入。推理输入依次选择显式 `samples_path`、已有的当前/默认样本文件、
+准备好的 samplers，三者互斥；显式路径不存在会报错。关闭采样落盘不会删除或忽略已有样本文件。
+框架不比较配置指纹，数据、采样或模型配置变化时应使用新运行目录。
+
+## 不落盘的阶段执行
 
 ```yaml
-mode: continue
 output_dir: null
+save_samples: false
 ```
 
-此时 `resume` 和 `run_name` 不生效，每次运行重新推理，不读取历史评估输出。
-输入数据集仍照常读取。该配置用于 `Evaluator.run()` 或 CLI `run`；独立的
-`sample()`、`infer()`、`evaluate_metrics()` 需要输出目录，即使传入显式文件路径也不例外。
+`sample()` 只加载一次 trajectory pool 并准备 samplers，不提前生成样本。
+其摘要中的 `samples` 和 `eval_types` 为 `null`，实际采样数量由 `infer()` 统计。
+`infer.batch_size` 控制按批采样、加载帧和推理；采样落盘同样流式消费，不汇集全部帧。
+
+同一个 Evaluator 可依次调用三个阶段，或直接调用 `run()`。无输出目录时不读取历史预测检查点，
+每次推理重新执行；仍允许显式读取样本文件或预测文件。独立 CLI 进程无法共享 samplers 或推理结果，
+因此跨进程执行后续阶段必须有文件输入。
+
+`infer()` 返回 `(summary, successful_records)`；`run()` 和 `evaluate_metrics()` 始终返回
+`metrics`、`coverage`、`predictions`、`details`。Python 返回完整指标明细，CLI 输出去掉逐条明细的摘要。
+不落盘时 `details` 为 `null`；内存指标没有预测文件来源时 `predictions` 也为 `null`。
+
+不要提交真实 API Key、私有服务地址、生成数据或 `evaluation_output/`。
