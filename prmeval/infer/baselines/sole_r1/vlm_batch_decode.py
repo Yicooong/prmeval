@@ -5,7 +5,7 @@ from pathlib import Path
 
 import torch
 from PIL import Image
-from transformers import AutoModelForMultimodalLM, AutoProcessor
+from transformers import AutoModelForImageTextToText, AutoProcessor
 from trl.data_utils import maybe_apply_chat_template
 
 from .utils import (
@@ -65,7 +65,7 @@ def load_model(
 
     processor = AutoProcessor.from_pretrained(checkpoint_path)
 
-    llm = AutoModelForMultimodalLM.from_pretrained(
+    llm = AutoModelForImageTextToText.from_pretrained(
         checkpoint_path,
         torch_dtype="auto",
         device_map="auto",

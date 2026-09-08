@@ -22,21 +22,16 @@ PRMEval 支持 Python 3.10 及以上版本。
 pip install -e .
 ```
 
-构建可分发的 wheel 并安装：
-
-```bash
-python -m pip install build
-python -m build --wheel
-pip install dist/prmeval-*.whl
-```
-
 安装后会提供 `prmeval` 命令。
 
 本地 Hugging Face/Qwen-VL 模型使用可选依赖：
 
 ```bash
-pip install -e '.[local-hf,local-qwen]'
+pip install -e '.[local-qwen]'
 ```
+
+Sole-R1 使用 `pip install -e '.[sole-r1]'`。依赖分组、独立数据转换工具和发布前检查见
+[安装文档](docs/INSTALLATION.md)。
 
 ## 快速开始
 

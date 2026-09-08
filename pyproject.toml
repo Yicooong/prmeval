@@ -7,6 +7,7 @@ requires-python = ">=3.10"
 authors = [{ name = "PRMEval contributors" }]
 dependencies = [
     "numpy>=1.24",
+    "opencv-python-headless>=4.8",
     "openai>=1.0",
     "pydantic>=2.7",
     "pyyaml>=6.0",
@@ -25,18 +26,29 @@ local-hf = [
     "torch>=2.1",
     "transformers>=4.57",
     "accelerate>=1.0",
+    "safetensors>=0.4.3",
+    "huggingface-hub>=0.34",
 ]
 local-qwen = [
+    "prmeval[local-hf]==0.1.0",
     "qwen-vl-utils>=0.0.8",
+]
+sole-r1 = [
+    "prmeval[local-qwen]==0.1.0",
+    "trl>=0.15.2",
+]
+visualization = [
+    "matplotlib>=3.7",
 ]
 dev = [
     "build>=1.2",
+    "twine>=5.0",
     "pytest>=8.0",
     "ruff>=0.8",
 ]
 
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=70.1"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]

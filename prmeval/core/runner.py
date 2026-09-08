@@ -451,7 +451,7 @@ class Evaluator:
     def run(self) -> dict:
         """Convenience orchestration for stage 1 -> stage 2 -> stage 3."""
         if self.config.mode == "continue":
-            inference, records = self._infer_continuously()
+            summary, records = self._infer_continuously()
             if self.output_dir is None:
                 if not records:
                     logger.info("Stage 3/3 Metrics skipped: no successful predictions")
@@ -459,8 +459,8 @@ class Evaluator:
                 return self._compute_record_metrics(records)
         else:
             self.sample()
-            inference = self.infer()
-        if inference["coverage"]["successful"] == 0:
+            summary = self.infer()
+        if summary["coverage"]["successful"] == 0:
             logger.info("Stage 3/3 Metrics skipped: no successful predictions")
-            return {"metrics": {}, **inference}
-        return self.evaluate_metrics(coverage=inference["coverage"])
+            return {"metrics": {}, **summary}
+        return self.evaluate_metrics(coverage=summary["coverage"])
