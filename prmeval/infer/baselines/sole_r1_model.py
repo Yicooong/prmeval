@@ -24,8 +24,8 @@ class SoleR1(Infer):
         if not config.model_path:
             raise ValueError(f"{config.name} requires infer.model_path")
 
-        self.from_zero = bool(config.options.get("from_zero", False))
-        self.temperature = float(config.options.get("temperature", 1.0))
+        self.from_zero = bool(config.model_extra_config.get("from_zero", False))
+        self.temperature = float(config.model_extra_config.get("temperature", 1.0))
         self.server = InferenceServer(config.model_path, config)
 
     def call(self, payload: dict) -> dict | None:
@@ -93,7 +93,6 @@ class SoleR1(Infer):
                     sample_id=sample.sample_id,
                     progress=value,
                     model=self.config.model_id or self.config.model_path or self.config.name,
-                    model_version=self.config.model_version,
                 )
             )
         return result

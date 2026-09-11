@@ -34,7 +34,7 @@ python -m pip install '.[local-qwen]'
 | Sole-R1 辅助绘图 | `pip install '.[sole-r1,visualization]'` | 另加 matplotlib |
 
 使用 wheel 时，将命令中的 `.` 替换为 wheel 路径，例如
-`python -m pip install './dist/prmeval-0.1.0-py3-none-any.whl[sole-r1]'`。
+`python -m pip install './dist/prmeval-0.2.0-py3-none-any.whl[sole-r1]'`。
 
 模型权重需另行下载或通过配置指定。CUDA/PyTorch/torchvision 的版本需与运行机器匹配。
 启用量化时需额外安装 `bitsandbytes`；选择 Unsloth 时需安装 `unsloth`；Flash Attention 属于可选加速，
@@ -58,7 +58,7 @@ python -m twine check dist/*
 生成文件位于 `dist/`，例如：
 
 ```text
-dist/prmeval-0.1.0-py3-none-any.whl
+dist/prmeval-0.2.0-py3-none-any.whl
 ```
 
 安装并检查命令：
@@ -98,4 +98,4 @@ prmeval infer --config configs/eval/openai_compatible_remote.yaml
 prmeval metrics --config configs/eval/openai_compatible_remote.yaml
 ```
 
-`prmeval` 不会自动读取 `.env`。配置使用环境变量名时，必须在运行命令前导出对应变量。
+`prmeval` 不会自动读取 `.env`。`infer.model_id`、`infer.base_url`、`infer.api_key` 省略或为 `null` 时，分别读取 `MODEL_ID`、`BASE_URL`、`API_KEY`；请在运行命令前导出所需变量。

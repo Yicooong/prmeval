@@ -8,7 +8,7 @@ PRMEval 是一个面向机器人任务进度与偏好模型的评测框架。它
 
 评测由三个可独立运行和验证的阶段组成：
 
-1. **Sample**：读取数据集、抽帧并生成统一的 `EvaluationRecord`。
+1. **Sample**：读取数据集、抽帧并生成包含 `sample` 的 `EvaluationRecord`。
 2. **Infer**：调用本地或远程模型并保存标准化预测结果。
 3. **Metrics**：读取成功的预测记录并计算、聚合指标。
 
@@ -34,6 +34,14 @@ Sole-R1 使用 `pip install -e '.[sole-r1]'`。依赖分组、独立数据转换
 [安装文档](docs/INSTALLATION.md)。
 
 ## 快速开始
+
+可以从配置模型的默认值生成 YAML 模板，再填写数据集路径和模型信息：
+
+```bash
+python -m prmeval.cli make-config --output configs/eval/my_eval.yaml
+```
+
+省略 `--output` 时输出到终端。配置内容直接由 `EvalConfig.export_config()` 导出，默认 YAML，使用 `--format json` 导出 JSON；无默认值的必填字段以 `null` 占位，使用前填写。
 
 仓库提供了调用通用远程模型 `openai_compatible` 的端到端冒烟配置
 [`configs/eval/openai_compatible_remote.yaml`](configs/eval/openai_compatible_remote.yaml)。运行前设置 OpenAI-compatible
@@ -64,10 +72,12 @@ prmeval run --config configs/eval/openai_compatible_remote.yaml > summary.json
 prmeval run --config configs/eval/openai_compatible_remote.yaml --no-progress
 ```
 
-默认 `save_samples: false`，样本按 batch 直接推理；配置 `output_dir` 保存推理和指标，设为 `null` 则不写产物。
+默认 `sampling.save_samples: false`，样本按 batch 直接推理；推理和指标默认写入 `/tmp/prmeval_evaluation_output/<task_name>/`，设置 `output_dir: null` 则不写产物。
+配置支持 YAML 和 JSON；顶层 `eval_types` 为单个字符串，同时选择采样器和指标。
+`task_name` 默认由 `{sampling.dataset_name}_{infer.name}_{eval_types}` 生成。
 Python 的 `run()` 始终返回含完整 `metrics`、`coverage` 和路径的字典。
 
-也可以单独运行各阶段。跨进程执行以下命令前，需要在配置中设置 `save_samples: true` 和非空 `output_dir`：
+也可以单独运行各阶段。跨进程执行以下命令前，需要在配置中设置 `sampling.save_samples: true` 和非空 `output_dir`：
 
 ```bash
 prmeval sample --config configs/eval/openai_compatible_remote.yaml

@@ -1,0 +1,81 @@
+{
+  "sampling": {
+    "dataset_name": "eval_dataset",
+    "paths": [],
+    "save_samples": false,
+    "max_trajectories": null,
+    "base_frames": 8,
+    "progress_type": "absolute_first_frame",
+    "num_examples_per_quality": 5,
+    "num_partial_successes": null,
+    "max_tasks": null,
+    "comparisons_per_task": null,
+    "max_comparisons": null,
+    "trajectories_per_source": null,
+    "temporal_robustness": {
+      "random_seed": 42,
+      "max_frames": 16,
+      "min_length_ratio": 0.7,
+      "max_length_ratio": 1.7,
+      "transforms": [
+        "pause",
+        "slow",
+        "fast",
+        "rewind",
+        "retry",
+        "truncate",
+        "skip"
+      ],
+      "variants_per_transform": 1,
+      "pause_extra_ratio_range": [
+        0.2,
+        0.7
+      ],
+      "slow_gamma_range": [
+        1.5,
+        3.0
+      ],
+      "fast_gamma_range": [
+        0.33,
+        0.67
+      ],
+      "peak_progress_range": [
+        0.6,
+        0.9
+      ],
+      "retreat_ratio_range": [
+        0.25,
+        0.6
+      ],
+      "rewind_extra_ratio_range": [
+        0.2,
+        0.7
+      ],
+      "retry_extra_ratio_range": [
+        0.2,
+        0.7
+      ],
+      "truncate_retained_ratio_range": [
+        0.7,
+        0.9
+      ],
+      "skip_removed_ratio_range": [
+        0.1,
+        0.3
+      ]
+    }
+  },
+  "infer": {
+    "name": null,
+    "base_url": null,
+    "api_key": null,
+    "model_id": null,
+    "model_path": null,
+    "batch_size": 1,
+    "model_extra_config": {}
+  },
+  "eval_types": "progress",
+  "output_dir": "/tmp/prmeval_evaluation_output",
+  "task_name": null,
+  "resume": true
+}

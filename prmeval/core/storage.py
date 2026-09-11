@@ -4,19 +4,18 @@ from __future__ import annotations
 
 import json
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
 import numpy as np
 
 from prmeval.utils import load_frames
 
-from .conversions import sample_to_record
-from .schemas import SAMPLE_SCHEMA_VERSION, EvaluationRecord, EvaluationSample, FrameReference, RecordInputItem
+from .schemas import EvaluationRecord, EvaluationSample, FrameReference, ProgressSample, Trajectory
 from .utils import _file_sha256, jsonable, read_jsonl
 
 
-def _load_item_frames(item: RecordInputItem, bundle_dir: Path, verify: bool) -> RecordInputItem:
+def _load_item_frames(item: Trajectory, bundle_dir: Path, verify: bool) -> Trajectory:
     """从 NPZ 引用加载帧并返回输入项副本; 检查路径、键名和帧数, 按 verify 决定是否校验哈希。"""
     reference = FrameReference.model_validate(item.frames)
     path = Path(reference.path)
@@ -38,7 +37,7 @@ def _load_item_frames(item: RecordInputItem, bundle_dir: Path, verify: bool) -> 
     return item.model_copy(update={"frames": frames})
 
 
-def _ensure_item_frames_loaded(item: RecordInputItem, bundle_dir: Path) -> RecordInputItem:
+def _ensure_item_frames_loaded(item: Trajectory, bundle_dir: Path) -> Trajectory:
     """确保输入项包含帧数组: 已有数组直接返回, 否则从文件加载, 不重复校验哈希。"""
     if isinstance(item.frames, np.ndarray):
         return item
@@ -62,12 +61,15 @@ def load_sample_records(path: Path, verify: bool = True) -> list[EvaluationRecor
                 record = EvaluationRecord.model_validate_json(line)
                 if record.execution is not None:
                     raise ValueError("expected a sampled record without execution results")
-                if record.sample_id in seen:
-                    raise ValueError(f"duplicate sample_id '{record.sample_id}'")
-                seen.add(record.sample_id)
-                hydrated_items = [_load_item_frames(item, path.parent, verify) for item in record.input.items]
-                if record.target and record.target.kind == "progress":
-                    values = record.target.values or []
+                if record.sample.sample_id in seen:
+                    raise ValueError(f"duplicate sample_id '{record.sample.sample_id}'")
+                seen.add(record.sample.sample_id)
+                hydrated_items = [
+                    _load_item_frames(item, path.parent, verify)
+                    for item in _sample_trajectories(record.sample).values()
+                ]
+                if isinstance(record.sample, ProgressSample) and record.sample.trajectory.target_progress is not None:
+                    values = record.sample.trajectory.target_progress
                     if len(hydrated_items) != 1 or len(values) != len(hydrated_items[0].frames):
                         raise ValueError("progress target length must equal the sampled frame count")
                 records.append(record)
@@ -78,24 +80,26 @@ def load_sample_records(path: Path, verify: bool = True) -> list[EvaluationRecor
     return records
 
 
-def save_samples_to_bundle(samples: Iterable[EvaluationSample], path: Path, dataset_name: str = "unknown") -> dict:
-    """将样本转换为统一记录, 保存关联的 NPZ 帧文件及 JSONL, 并返回数量和评估类型统计。"""
+def save_samples_to_bundle(records: Iterable[EvaluationRecord], path: Path) -> dict:
+    """保存采样记录及关联的 NPZ 帧文件和 JSONL, 并返回数量和评估类型统计。"""
 
     path.parent.mkdir(parents=True, exist_ok=True)
     seen: set[str] = set()
     counts: Counter[str] = Counter()
     sample_count = 0
     with path.open("w", encoding="utf-8") as handle:
-        for sample in samples:
+        for source in records:
+            if source.execution is not None or source.prediction is not None:
+                raise ValueError("Expected a sampled record without inference results")
+            sample = source.sample
             if sample.sample_id in seen:
                 raise ValueError(f"Duplicate sample_id: {sample.sample_id}")
             seen.add(sample.sample_id)
-            record = _save_record_frames(sample_to_record(sample, dataset_name), path.parent)
+            record = _save_record_frames(source, path.parent)
             handle.write(json.dumps(jsonable(record), ensure_ascii=False) + "\n")
-            counts[record.evaluation.type] += 1
+            counts[record.eval_type] += 1
             sample_count += 1
     return {
-        "schema_version": SAMPLE_SCHEMA_VERSION,
         "samples": sample_count,
         "eval_types": dict(sorted(counts.items())),
         "path": str(path),
@@ -105,13 +109,16 @@ def save_samples_to_bundle(samples: Iterable[EvaluationSample], path: Path, data
 def validate_sample_bundle(path: Path) -> dict:
     """完整校验采样记录及关联帧文件, 返回样本数、帧数等统计; 校验失败时抛出异常。"""
     records = load_sample_records(path, verify=True)
-    counts = Counter(record.evaluation.type for record in records)
+    counts = Counter(record.eval_type for record in records)
     frame_count = sum(
-        sum(FrameReference.model_validate(item.frames).num_frames for item in record.input.items) for record in records
+        sum(
+            FrameReference.model_validate(item.frames).num_frames
+            for item in _sample_trajectories(record.sample).values()
+        )
+        for record in records
     )
     return {
         "valid": True,
-        "schema_version": SAMPLE_SCHEMA_VERSION,
         "samples": len(records),
         "frames": frame_count,
         "eval_types": dict(sorted(counts.items())),
@@ -122,7 +129,7 @@ def validate_sample_bundle(path: Path) -> dict:
 def write_metric_details_jsonl(path: Path, records: list[EvaluationRecord], metrics: dict) -> None:
     """将已计算的逐样本和逐组指标详情写入 JSONL; 本函数不计算指标。"""
     record_rows = {
-        record.sample_id: {
+        record.sample.sample_id: {
             "detail_type": "record",
             **jsonable(record),
             "metrics": {},
@@ -149,14 +156,14 @@ def write_metric_details_jsonl(path: Path, records: list[EvaluationRecord], metr
             handle.write(json.dumps(jsonable(row), ensure_ascii=False) + "\n")
 
 
-def _save_item_frames(item: RecordInputItem, sample_id: str, bundle_dir: Path) -> RecordInputItem:
+def _save_item_frames(item: Trajectory, sample_id: str, role: str, bundle_dir: Path) -> Trajectory:
     """将一个输入项的帧压缩保存到 sample_frames 目录, 返回以文件引用替代帧内容的输入项副本。"""
     frames = load_frames(item.frames)
     if len(frames) == 0:
-        raise ValueError(f"Sample {sample_id} contains an empty '{item.role}' input")
+        raise ValueError(f"Sample {sample_id} contains an empty '{role}' input")
     frames_dir = bundle_dir / "sample_frames"
     frames_dir.mkdir(parents=True, exist_ok=True)
-    path = frames_dir / f"{sample_id}-{item.role}.npz"
+    path = frames_dir / f"{sample_id}-{role}.npz"
     np.savez_compressed(path, frames=frames)
     reference = FrameReference(
         path=path.relative_to(bundle_dir).as_posix(),
@@ -166,19 +173,44 @@ def _save_item_frames(item: RecordInputItem, sample_id: str, bundle_dir: Path) -
     return item.model_copy(update={"frames": reference})
 
 
+def _sample_trajectories(sample: EvaluationSample) -> dict[str, Trajectory]:
+    if isinstance(sample, ProgressSample):
+        return {"trajectory": sample.trajectory}
+    return {"chosen_trajectory": sample.chosen_trajectory, "rejected_trajectory": sample.rejected_trajectory}
+
+
+def _map_record_trajectories(
+    record: EvaluationRecord, transform: Callable[[str, Trajectory], Trajectory]
+) -> EvaluationRecord:
+    trajectories = {
+        name: transform(name, trajectory) for name, trajectory in _sample_trajectories(record.sample).items()
+    }
+    return record.model_copy(update={"sample": record.sample.model_copy(update=trajectories)})
+
+
 def _save_record_frames(record: EvaluationRecord, bundle_dir: Path) -> EvaluationRecord:
-    """保存记录中所有输入项的帧, 返回包含文件引用的记录副本。"""
-    items = [_save_item_frames(item, record.sample_id, bundle_dir) for item in record.input.items]
-    return record.model_copy(update={"input": record.input.model_copy(update={"items": items})})
+    """Save sampled frames while preserving every other trajectory field."""
+    return _map_record_trajectories(
+        record,
+        lambda name, trajectory: _save_item_frames(
+            trajectory, record.sample.sample_id, name.removesuffix("_trajectory"), bundle_dir
+        ),
+    )
 
 
 def load_record_frames(record: EvaluationRecord, bundle_dir: Path) -> EvaluationRecord:
-    """返回帧已加载的记录副本, 保留原记录中的文件引用。
+    """Hydrate a copy of the sample, preserving the original record's frame references."""
+    return _map_record_trajectories(record, lambda name, trajectory: _ensure_item_frames_loaded(trajectory, bundle_dir))
 
-    已有数组直接复用; 文件引用按需加载, 不重复执行 load_sample_records 默认进行的哈希校验。
-    """
-    items = [_ensure_item_frames_loaded(item, bundle_dir) for item in record.input.items]
-    return record.model_copy(update={"input": record.input.model_copy(update={"items": items})})
+
+def clear_non_string_frame_values(record: EvaluationRecord) -> EvaluationRecord:
+    """Release frame arrays in retained results; metrics need only sample labels and metadata."""
+    return _map_record_trajectories(
+        record,
+        lambda name, trajectory: (
+            trajectory if isinstance(trajectory.frames, str) else trajectory.model_copy(update={"frames": []})
+        ),
+    )
 
 
 def prepare_inference_outputs(predictions_path: Path, errors_path: Path, *, resume: bool) -> set[str]:
@@ -192,7 +224,7 @@ def prepare_inference_outputs(predictions_path: Path, errors_path: Path, *, resu
     records = [EvaluationRecord.model_validate(row) for row in read_jsonl(predictions_path)]
     if any(not record.execution or record.execution.status != "success" for record in records):
         raise ValueError(f"Prediction checkpoint contains a non-success record: {predictions_path}")
-    completed = [record.sample_id for record in records]
+    completed = [record.sample.sample_id for record in records]
     if len(completed) != len(set(completed)):
         raise ValueError(f"Duplicate successful sample_id found in {predictions_path}")
     return set(completed)

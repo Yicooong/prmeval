@@ -8,7 +8,14 @@ from typing import Any
 import numpy as np
 
 from prmeval.core.registry import METRICS, register_metric
-from prmeval.core.schemas import EvaluationRecord
+from prmeval.core.schemas import (
+    EvaluationRecord,
+    PreferencePrediction,
+    PreferenceSample,
+    ProgressPrediction,
+    ProgressSample,
+    Trajectory,
+)
 
 
 class Metric(ABC):
@@ -39,8 +46,8 @@ def _kendall(a: list[float], b: list[float]) -> float:
 
 
 def _slice_key(record: EvaluationRecord) -> str:
-    infer = record.infer.name if record.infer else "unknown"
-    return f"{record.evaluation.dataset.name}:{infer}"
+    infer = record.execution.infer_name if record.execution else "unknown"
+    return f"{record.sample.dataset_name}:{infer}"
 
 
 @register_metric("progress")
@@ -51,32 +58,31 @@ class ProgressMetric(Metric):
         valid = [
             record
             for record in records
-            if record.evaluation.type in {"progress", "reward_alignment"}
+            if record.eval_type in {"progress", "reward_alignment"}
             and _successful(record)
-            and record.target is not None
-            and record.target.kind == "progress"
-            and record.prediction is not None
-            and record.prediction.kind == "progress"
+            and isinstance(record.sample, ProgressSample)
+            and record.sample.trajectory.target_progress is not None
+            and isinstance(record.prediction, ProgressPrediction)
         ]
         details: dict[str, Any] = {}
         by_slice: dict[str, list[tuple[float, float]]] = defaultdict(list)
         for record in valid:
-            target = np.asarray(record.target.values or [], dtype=float)
-            prediction = np.asarray(record.prediction.values or [], dtype=float)
+            target = np.asarray(record.sample.trajectory.target_progress or [], dtype=float)
+            prediction = np.asarray(record.prediction.progress or [], dtype=float)
             if len(target) == 0 or len(target) != len(prediction):
                 raise ValueError(
-                    f"progress sample '{record.sample_id}' requires non-empty, equal-length "
-                    "target.values and prediction.values"
+                    f"progress sample '{record.sample.sample_id}' requires non-empty, equal-length "
+                    "target_progress and prediction.progress"
                 )
             if np.any((target < 0) | (target > 1)) or np.any((prediction < 0) | (prediction > 1)):
-                raise ValueError(f"progress sample '{record.sample_id}' contains progress outside [0, 1]")
+                raise ValueError(f"progress sample '{record.sample.sample_id}' contains progress outside [0, 1]")
             mse = float(np.mean((prediction - target) ** 2))
             correlation = _pearson(target, prediction)
-            details[record.sample_id] = {
+            details[record.sample.sample_id] = {
                 "mse": mse,
                 "pearson": correlation,
-                "dataset": record.evaluation.dataset.name,
-                "infer": record.infer.name if record.infer else None,
+                "dataset": record.sample.dataset_name,
+                "infer": record.execution.infer_name if record.execution else None,
             }
             by_slice[_slice_key(record)].append((mse, correlation))
         losses = [value[0] for pairs in by_slice.values() for value in pairs]
@@ -167,30 +173,31 @@ class ProgressTemporalVariationMetric(Metric):
         valid = [
             record
             for record in records
-            if record.evaluation.type in {"progress_temporal_variation", "synthetic_temporal_robustness"}
+            if record.eval_type in {"progress_temporal_variation", "synthetic_temporal_robustness"}
             and _successful(record)
-            and record.target is not None
-            and record.target.kind == "progress"
-            and record.prediction is not None
-            and record.prediction.kind == "progress"
+            and isinstance(record.sample, ProgressSample)
+            and record.sample.trajectory.target_progress is not None
+            and isinstance(record.prediction, ProgressPrediction)
         ]
         stats: list[dict[str, Any]] = []
         details: dict[str, Any] = {}
         for record in valid:
-            target = np.asarray(record.target.values or [], dtype=float)
-            prediction = np.asarray(record.prediction.values or [], dtype=float)
+            target = np.asarray(record.sample.trajectory.target_progress or [], dtype=float)
+            prediction = np.asarray(record.prediction.progress or [], dtype=float)
             if len(target) == 0 or len(target) != len(prediction):
                 raise ValueError(
-                    f"progress_temporal_variation sample '{record.sample_id}' requires non-empty, equal-length "
-                    "target.values and prediction.values"
+                    f"progress_temporal_variation sample '{record.sample.sample_id}' requires non-empty, equal-length "
+                    "target_progress and prediction.progress"
                 )
             if not np.all(np.isfinite(target)) or not np.all(np.isfinite(prediction)):
-                raise ValueError(f"progress_temporal_variation sample '{record.sample_id}' contains non-finite values")
+                raise ValueError(
+                    f"progress_temporal_variation sample '{record.sample.sample_id}' contains non-finite values"
+                )
             if np.any((target < 0) | (target > 1)) or np.any((prediction < 0) | (prediction > 1)):
                 raise ValueError(
-                    f"progress_temporal_variation sample '{record.sample_id}' contains progress outside [0, 1]"
+                    f"progress_temporal_variation sample '{record.sample.sample_id}' contains progress outside [0, 1]"
                 )
-            metadata = record.input.items[0].data.get("synthetic_temporal", {})
+            metadata = record.sample.trajectory.metadata.get("synthetic_temporal", {})
             transform = str(metadata.get("transform") or "unknown")
             target_delta = np.diff(target)
             prediction_delta = np.diff(prediction)
@@ -208,7 +215,7 @@ class ProgressTemporalVariationMetric(Metric):
             time_target = np.linspace(0, 1, len(prediction))
             time_mae = float(np.mean(np.abs(prediction - time_target))) if transform != "original" else None
             stat = {
-                "sample_id": record.sample_id,
+                "sample_id": record.sample.sample_id,
                 "slice": _slice_key(record),
                 "transform": transform,
                 "mae": float(np.mean(np.abs(error))),
@@ -234,7 +241,7 @@ class ProgressTemporalVariationMetric(Metric):
                 "length_ratio": float(metadata.get("length_ratio", 1.0)),
             }
             stats.append(stat)
-            details[record.sample_id] = {
+            details[record.sample.sample_id] = {
                 key: stat[key]
                 for key in (
                     "transform",
@@ -274,28 +281,37 @@ class QualityPreferenceMetric(Metric):
         valid = [
             record
             for record in records
-            if record.evaluation.type == "quality_preference"
+            if record.eval_type == "quality_preference"
             and _successful(record)
-            and record.prediction is not None
-            and record.prediction.kind == "preference"
+            and isinstance(record.sample, PreferenceSample)
+            and isinstance(record.prediction, PreferencePrediction)
         ]
         predictions = [record.prediction for record in valid]
-        correct = sum(prediction.label == "chosen" for prediction in predictions)
-        ties = sum(prediction.label == "tie" for prediction in predictions)
+        correct = sum(prediction.preference == "chosen" for prediction in predictions)
+        ties = sum(prediction.preference == "tie" for prediction in predictions)
         return {
             "accuracy": correct / len(predictions) if predictions else None,
             "tie_rate": ties / len(predictions) if predictions else None,
             "num_comparisons": len(predictions),
             "details": {
-                record.sample_id: {
-                    "correct": record.prediction.label == "chosen",
-                    "tie": record.prediction.label == "tie",
-                    "preference": record.prediction.label,
-                    "chosen_probability": record.prediction.probability,
+                record.sample.sample_id: {
+                    "correct": record.prediction.preference == "chosen",
+                    "tie": record.prediction.preference == "tie",
+                    "preference": record.prediction.preference,
+                    "chosen_probability": record.prediction.chosen_probability,
                 }
                 for record in valid
             },
         }
+
+
+def _target_rank(trajectory: Trajectory) -> float | None:
+    rank = trajectory.partial_success
+    if rank is None:
+        rank = trajectory.preference_rank
+    if rank is None:
+        rank = {"successful": 2.0, "suboptimal": 1.0, "failure": 0.0, "failed": 0.0}.get(trajectory.quality_label or "")
+    return float(rank) if rank is not None else None
 
 
 @register_metric("policy_ranking")
@@ -305,24 +321,23 @@ class PolicyRankingMetric(Metric):
         details: dict[str, Any] = {}
         for record in records:
             if not (
-                record.evaluation.type == "policy_ranking"
+                record.eval_type == "policy_ranking"
                 and _successful(record)
-                and record.target is not None
-                and record.target.kind == "rank"
-                and record.target.value is not None
-                and record.prediction is not None
-                and record.prediction.kind == "progress"
-                and record.prediction.values
+                and isinstance(record.sample, ProgressSample)
+                and isinstance(record.prediction, ProgressPrediction)
+                and record.prediction.progress
             ):
                 continue
-            curve = [float(value) for value in record.prediction.values]
-            key = f"{_slice_key(record)}:{record.input.task}"
-            target_rank = float(record.target.value)
+            curve = [float(value) for value in record.prediction.progress]
+            key = f"{_slice_key(record)}:{record.sample.trajectory.task}"
+            target_rank = _target_rank(record.sample.trajectory)
+            if target_rank is None:
+                continue
             last = curve[-1]
             average = float(np.mean(curve))
             total = float(np.sum(curve))
-            by_task[key].append((record.sample_id, target_rank, last, average, total))
-            details[record.sample_id] = {
+            by_task[key].append((record.sample.sample_id, target_rank, last, average, total))
+            details[record.sample.sample_id] = {
                 "group_id": key,
                 "target_rank": target_rank,
                 "last": last,
@@ -360,27 +375,25 @@ class ConfusionMatrixMetric(Metric):
         valid = [
             record
             for record in records
-            if record.evaluation.type == "confusion_matrix"
+            if record.eval_type == "confusion_matrix"
             and _successful(record)
-            and record.target is not None
-            and record.target.kind == "task_match"
-            and record.prediction is not None
-            and record.prediction.kind == "progress"
-            and record.prediction.values
-            and record.input.items[0].data.get("lang_task") is not None
-            and record.input.items[0].data.get("video_task") is not None
+            and isinstance(record.sample, ProgressSample)
+            and isinstance(record.prediction, ProgressPrediction)
+            and record.prediction.progress
+            and record.sample.trajectory.metadata.get("lang_task") is not None
+            and record.sample.trajectory.metadata.get("video_task") is not None
         ]
         tasks = sorted(
-            {str(record.input.items[0].data["lang_task"]) for record in valid}
-            | {str(record.input.items[0].data["video_task"]) for record in valid}
+            {str(record.sample.trajectory.metadata["lang_task"]) for record in valid}
+            | {str(record.sample.trajectory.metadata["video_task"]) for record in valid}
         )
         index = {task: i for i, task in enumerate(tasks)}
         matrix = np.zeros((len(tasks), len(tasks)), dtype=float)
         counts = np.zeros_like(matrix, dtype=int)
         for record in valid:
-            row = index[str(record.input.items[0].data["lang_task"])]
-            column = index[str(record.input.items[0].data["video_task"])]
-            matrix[row, column] += float(record.prediction.values[-1])
+            row = index[str(record.sample.trajectory.metadata["lang_task"])]
+            column = index[str(record.sample.trajectory.metadata["video_task"])]
+            matrix[row, column] += float(record.prediction.progress[-1])
             counts[row, column] += 1
         matrix = np.divide(matrix, counts, out=np.zeros_like(matrix), where=counts != 0)
         trace = float(np.trace(matrix))
@@ -400,11 +413,14 @@ class ConfusionMatrixMetric(Metric):
             "normalized_trace_minus_offdiag": average_diagonal - average_off_diagonal,
             "num_samples": len(valid),
             "details": {
-                record.sample_id: {
-                    "lang_task": record.input.items[0].data["lang_task"],
-                    "video_task": record.input.items[0].data["video_task"],
-                    "target_match": bool(record.target.value),
-                    "predicted_progress": float(record.prediction.values[-1]),
+                record.sample.sample_id: {
+                    "lang_task": record.sample.trajectory.metadata["lang_task"],
+                    "video_task": record.sample.trajectory.metadata["video_task"],
+                    "target_match": (
+                        record.sample.trajectory.metadata["lang_task"]
+                        == record.sample.trajectory.metadata["video_task"]
+                    ),
+                    "predicted_progress": float(record.prediction.progress[-1]),
                 }
                 for record in valid
             },

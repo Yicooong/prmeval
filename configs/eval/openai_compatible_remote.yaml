@@ -1,20 +1,19 @@
 sampling:
+  save_samples: false
   dataset_name: rbm_1m_ood_test
   paths: [/mnt/shared-storage-gpfs2/evobox-share-gpfs2/liuyicong/robometer/hf_rbm_1m_ood_datasets/rbm-1m-ood]
   max_trajectories: 2
-  eval_types: [progress]
   base_frames: 12
   progress_type: absolute_first_frame
 
 infer:
   name: openai_compatible
-  base_url: BASE_URL
-  api_key: API_KEY
-  model_id: MODEL_ID
+  base_url: null  # 从环境变量 BASE_URL 读取
+  api_key: null  # 从环境变量 API_KEY 读取
+  model_id: null  # 从环境变量 MODEL_ID 读取
 
 
-metrics: [progress]
+eval_types: progress
 # output_dir: /mnt/shared-storage-user/xxx/prmeval/evaluation_output
-# run_name: rbm_1m_ood_openai_compatible_reward_alignment
+# task_name: rbm_1m_ood_openai_compatible_reward_alignment
 resume: false
-save_samples: false

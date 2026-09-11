@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable
 from pathlib import Path
 from typing import TypeVar
 
@@ -15,12 +15,9 @@ from prmeval.metrics.builtins import compute_metrics
 from prmeval.sample.samplers import EvalSampler
 from prmeval.sample.utils import load_hf_trajectory_pool
 
-from .config import EvalConfig, SamplingConfig
+from .config import EvalConfig
 from .conversions import (
     build_inference_record,
-    clear_non_string_frame_values,
-    record_to_sample,
-    sample_to_record,
     validate_prediction_for_sample,
 )
 from .registry import INFERS, SAMPLERS
@@ -31,6 +28,7 @@ from .schemas import (
 )
 from .storage import (
     append_inference_records,
+    clear_non_string_frame_values,
     load_record_frames,
     load_sample_records,
     prepare_inference_outputs,
@@ -44,33 +42,27 @@ T = TypeVar("T")
 
 
 def create_samplers(
-    config: SamplingConfig,
+    config: EvalConfig,
     pool: list[Trajectory] | None = None,
-) -> list[EvalSampler]:
-    return [SAMPLERS.get(eval_type)(config, config.dataset_name, pool=pool) for eval_type in config.eval_types]
+) -> EvalSampler:
+    return SAMPLERS.get(config.eval_types)(config.sampling, config.sampling.dataset_name, pool=pool)
 
 
 class Evaluator:
     def __init__(self, config: EvalConfig, show_progress: bool = True):
         self.config = config
         self.show_progress = show_progress and sys.stderr.isatty()
-        run_name = config.run_name or "default"
-        self.output_dir = Path(config.output_dir) / run_name if config.output_dir is not None else None
+        self.output_dir = Path(config.output_dir) / config.task_name if config.output_dir is not None else None
         self.samples_path = self.output_dir / "samples.jsonl" if self.output_dir is not None else None
         self.predictions_path = self.output_dir / "predictions.jsonl" if self.output_dir is not None else None
         self.errors_path = self.output_dir / "errors.jsonl" if self.output_dir is not None else None
         self.metrics_path = self.output_dir / "metrics.json" if self.output_dir is not None else None
         self.metrics_detail_path = self.output_dir / "metrics_detail.jsonl" if self.output_dir is not None else None
 
-        self.samplers: list[EvalSampler] | None = None
+        self.sampler: EvalSampler | None = None
         self._successful_records: list[EvaluationRecord] | None = None
         self._inference_summary: dict | None = None
         self._stages_started = False
-
-    def _iter_sampler_samples(self, samplers: Iterable[EvalSampler]) -> Iterator[EvaluationSample]:
-        """Yield every sample produced by each sampler in order."""
-        for sampler in samplers:
-            yield from sampler.sample()
 
     def _with_progress(
         self,
@@ -154,12 +146,16 @@ class Evaluator:
         if any(not record.execution or record.execution.status != "success" for record in records):
             raise ValueError(f"Metric input must contain only successful records: {source}")
         identities = [
-            (record.evaluation.dataset.name, record.infer.name if record.infer else None, record.sample_id)
+            (
+                record.sample.dataset_name,
+                record.execution.infer_name if record.execution else None,
+                record.sample.sample_id,
+            )
             for record in records
         ]
         if len(identities) != len(set(identities)):
             raise ValueError(f"Metric input contains duplicate dataset/infer/sample identities: {source}")
-        metric_names = self.config.metrics or self.config.sampling.eval_types
+        metric_names = [self.config.eval_types]
         return compute_metrics(
             records,
             self._with_progress(
@@ -170,27 +166,24 @@ class Evaluator:
             ),
         )
 
-
     def sample(self, samples_path: str | Path | None = None) -> dict:
-        """Stage 1: prepare lazy samplers, optionally materializing a portable sample bundle.
-            param samples_path: optional path to write a sample bundle; requires output_dir and save_samples=True 
+        """Stage 1: prepare a lazy sampler, optionally materializing a portable sample bundle.
+        param samples_path: optional path to write a bundle; validated by EvalConfig.validate_sample_output
         """
+        EvalConfig.model_validate(self.config, context={"samples_path": samples_path})
         self._reset_inference_state()
-        self.samplers = None
-        save_samples = self.output_dir is not None and self.config.save_samples
-        if samples_path is not None and not save_samples:
-            raise ValueError("samples_path output requires output_dir and save_samples=True")
+        self.sampler = None
+        save_samples = self.config.sampling.save_samples
         destination = (Path(samples_path) if samples_path is not None else self.samples_path) if save_samples else None
-        logger.info("Stage 1/3 Sample started: %s", destination or "prepare samplers")
+        logger.info("Stage 1 Sample started: %s", destination or "prepare sampler")
         pool = load_hf_trajectory_pool(self.config.sampling)
-        self.samplers = create_samplers(self.config.sampling, pool=pool)
+        self.sampler = create_samplers(self.config, pool=pool)
         trajectories_loaded = len(pool)
         if destination is None:
             logger.info(
-                "Stage 1/3 Samplers prepared: %d trajectories; samples generated during infer", trajectories_loaded
+                "Stage 1/3 Sampler prepared: %d trajectories; samples generated during infer", trajectories_loaded
             )
             return {
-                "schema_version": "bench.record.v1",
                 "samples": None,
                 "eval_types": None,
                 "trajectories": trajectories_loaded,
@@ -201,17 +194,14 @@ class Evaluator:
         # 如果保存.npz,程序会继续执行到这里,将采样结果保存到指定路径
         summary = save_samples_to_bundle(
             self._with_progress(
-                self._iter_sampler_samples(self.samplers),
+                (EvaluationRecord(eval_type=self.sampler.eval_type, sample=sample) for sample in self.sampler.sample()),
                 description="Stage 1/3 Generate and write samples",
                 unit="sample",
             ),
             destination,
-            self.config.sampling.dataset_name,
         )
         if summary["samples"] == 0:
-            raise ValueError(
-                f"Sampling produced no samples for eval types: {', '.join(self.config.sampling.eval_types)}"
-            )
+            raise ValueError(f"Sampling produced no samples for eval types: {self.config.eval_types}")
         self.samples_path = destination
         summary.update({"trajectories": trajectories_loaded, "reused": False})
         logger.info("Stage 1/3 Sample completed: %d trajectories, %d samples", trajectories_loaded, summary["samples"])
@@ -222,7 +212,7 @@ class Evaluator:
         samples_path: str | Path | None = None,
         predictions_path: str | Path | None = None,
     ) -> tuple[dict, list[EvaluationRecord]]:
-        """Stage 2: consume either a sample bundle or prepared samplers in bounded batches."""
+        """Stage 2: consume either a sample bundle or a prepared sampler in bounded batches."""
         self._reset_inference_state()
         if predictions_path is not None and self.output_dir is None:
             raise ValueError("predictions_path requires output_dir")
@@ -232,18 +222,18 @@ class Evaluator:
         inputs: Iterable[EvaluationRecord | EvaluationSample]
         total = None
         # | 来源      | `inputs` 中的元素                    | 是否调用 sampler |
-        # | 文件      | `EvaluationRecord`，帧以文件引用保存  | 否              |
-        # | samplers  | `ProgressSample / PreferenceSample` | 是，迭代时才生成 |
+        # | 文件      | `EvaluationRecord`, 帧以文件引用保存 | 否              |
+        # | sampler   | `ProgressSample / PreferenceSample` | 是, 迭代时才生成 |
         if source is not None:
             inputs = load_sample_records(source)
             total = len(inputs)
-            eval_types = {record.evaluation.type for record in inputs}
-        elif self.samplers is not None:
-            inputs = self._iter_sampler_samples(self.samplers)
-            eval_types = {sampler.eval_type for sampler in self.samplers}
-            total = sum(sampler.pool_size for sampler in self.samplers)
+            eval_types = {record.eval_type for record in inputs}
+        elif self.sampler is not None:
+            inputs = self.sampler.sample()
+            eval_types = {self.sampler.eval_type}
+            total = self.sampler.pool_size
         else:
-            raise ValueError("infer() requires samples_path or prepared samplers; call sample() first")
+            raise ValueError("infer() requires samples_path or a prepared sampler; call sample() first")
 
         load_builtin_infer(self.config.infer.name)
         infer_cls = INFERS.get(self.config.infer.name)
@@ -262,15 +252,15 @@ class Evaluator:
             prepare_inference_outputs(self.predictions_path, self.errors_path, resume=self.config.resume)
             for row in read_jsonl(self.predictions_path):
                 record = EvaluationRecord.model_validate(row)
-                checkpoint[record.sample_id] = record
-        initially_skipped = sum(item.sample_id in checkpoint for item in inputs) if source is not None else 0
+                checkpoint[record.sample.sample_id] = record
+        initially_skipped = sum(item.sample.sample_id in checkpoint for item in inputs) if source is not None else 0
         pending = self._with_progress(
             inputs,
             description=f"Stage 2/3 Infer (skipped={initially_skipped})",
             unit="sample",
             total=total,
         )
-        logger.info("Stage 2/3 Infer started: %s", source or "samplers")
+        logger.info("Stage 2/3 Infer started: %s", source or "sampler")
         successful: dict[str, EvaluationRecord] = {}
         failed_ids: set[str] = set()
         seen: set[str] = set()
@@ -283,19 +273,20 @@ class Evaluator:
             batch_records: list[EvaluationRecord] = []
             # 准备当前batch的模型输入
             for item in source_batch:
-                if item.sample_id in seen:
-                    raise ValueError(f"Duplicate sample_id: {item.sample_id}")
-                seen.add(item.sample_id)
-                input_order.append(item.sample_id)
-                if item.sample_id in checkpoint:
-                    successful[item.sample_id] = checkpoint[item.sample_id]
+                sample_id = item.sample.sample_id if isinstance(item, EvaluationRecord) else item.sample_id
+                if sample_id in seen:
+                    raise ValueError(f"Duplicate sample_id: {sample_id}")
+                seen.add(sample_id)
+                input_order.append(sample_id)
+                if sample_id in checkpoint:
+                    successful[sample_id] = checkpoint[sample_id]
                     skipped += 1
                     continue
-                # 如果是文件输入，加载并转化为sample(带有np文件)
+                # 文件输入只加载 Sample 中的帧, 无需重建样本结构。
                 if isinstance(item, EvaluationRecord):
                     source_record = item
                     try:
-                        sample = record_to_sample(load_record_frames(source_record, source.parent))
+                        sample = load_record_frames(source_record, source.parent).sample
                     except Exception as exc:
                         batch_records.append(
                             build_inference_record(
@@ -309,7 +300,7 @@ class Evaluator:
                 else:
                     sample = item
                     source_record = clear_non_string_frame_values(
-                        sample_to_record(sample, self.config.sampling.dataset_name)
+                        EvaluationRecord(eval_type=self.sampler.eval_type, sample=sample)
                     )
                 runtime_sources.append(source_record)
                 runtime_samples.append(sample)
@@ -321,17 +312,15 @@ class Evaluator:
             executed += len(batch_records)
             for record in batch_records:
                 if record.execution.status == "success":
-                    successful[record.sample_id] = record
+                    successful[record.sample.sample_id] = record
                 else:
-                    failed_ids.add(record.sample_id)
-                    logger.warning("Inference failed for %s: %s", record.sample_id, record.execution.error)
+                    failed_ids.add(record.sample.sample_id)
+                    logger.warning("Inference failed for %s: %s", record.sample.sample_id, record.execution.error)
             if self.output_dir is not None:
                 append_inference_records(batch_records, self.predictions_path, self.errors_path)
             del runtime_samples, runtime_sources, source_batch, item
         if not seen:
-            raise ValueError(
-                f"Sampling produced no samples for eval types: {', '.join(self.config.sampling.eval_types)}"
-            )
+            raise ValueError(f"Sampling produced no samples for eval types: {self.config.eval_types}")
         summary = {
             "coverage": self._build_coverage_summary(
                 successful_ids=set(successful),
@@ -355,7 +344,6 @@ class Evaluator:
             summary["coverage"]["skipped"],
         )
         return summary, records
-
 
     def evaluate_metrics(
         self,
@@ -385,9 +373,9 @@ class Evaluator:
             if coverage is None:
                 coverage = self._inference_summary["coverage"]
         if coverage is None:
-            successful_ids = {record.sample_id for record in records}
+            successful_ids = {record.sample.sample_id for record in records}
             failed = (
-                len({row["sample_id"] for row in read_jsonl(self.errors_path)} - successful_ids)
+                len({row["sample"]["sample_id"] for row in read_jsonl(self.errors_path)} - successful_ids)
                 if source is not None and source == self.predictions_path and self.errors_path is not None
                 else 0
             )

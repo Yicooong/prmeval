@@ -84,7 +84,7 @@ class TopReward(Infer):
         super().__init__(config)
         if not config.model_path:
             raise ValueError("topreward requires infer.model_path")
-        options = config.options
+        options = config.model_extra_config
         self._initialize(
             model_path=config.model_path,
             max_frames=int(options.get("max_frames", 64)),
@@ -333,7 +333,6 @@ class TopReward(Infer):
                     sample_id=sample.sample_id,
                     progress=values.tolist(),
                     model=self.config.model_id or self.config.model_path or self.config.name,
-                    model_version=self.config.model_version,
                 )
             )
         return result

@@ -492,7 +492,7 @@ class RoboDopamine(Infer):
         super().__init__(config)
         if not config.model_path:
             raise ValueError("robodopamine requires infer.model_path")
-        options = config.options
+        options = config.model_extra_config
         self._initialize(
             model_path=config.model_path,
             frame_interval=int(options.get("frame_interval", 1)),
@@ -629,7 +629,6 @@ class RoboDopamine(Infer):
                     sample_id=sample.sample_id,
                     progress=values.tolist(),
                     model=self.config.model_id or self.config.model_path or self.config.name,
-                    model_version=self.config.model_version,
                 )
             )
         return result

@@ -1,0 +1,16 @@
+{
+  "sampling": {
+    "dataset_name": "json-config-smoke",
+    "paths": ["examples/stage_1_smoke/trajectories.jsonl"],
+    "max_trajectories": 1,
+    "base_frames": 3
+  },
+  "infer": {
+    "name": "openai_compatible",
+    "base_url": null,
+    "api_key": null,
+    "model_id": null,
+    "model_extra_config": {}
+  },
+  "eval_types": "progress"
+}

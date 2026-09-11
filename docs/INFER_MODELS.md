@@ -21,7 +21,7 @@ import numpy as np
 from ...core.config import InferConfig
 from ...core.registry import register_infer
 from ...core.schemas import EvaluationSample, Prediction, ProgressPrediction, ProgressSample
-from ..base import Infer, model_identity
+from ..base import Infer
 
 
 @register_infer("my_model")
@@ -37,7 +37,7 @@ class MyModel(Infer):
         import torch
         from transformers import AutoModel
 
-        dtype = config.options.get("dtype", "bfloat16")
+        dtype = config.model_extra_config.get("dtype", "bfloat16")
         self.model = AutoModel.from_pretrained(
             config.model_path,
             torch_dtype=getattr(torch, dtype),
@@ -62,8 +62,7 @@ class MyModel(Infer):
                 ProgressPrediction(
                     sample_id=sample.sample_id,
                     progress=values.tolist(),
-                    model=model_identity(self.config),
-                    model_version=self.config.model_version,
+                    **self.model_info(),
                 )
             )
         return predictions
@@ -101,9 +100,8 @@ infer:
   name: my_model
   model_path: /models/my-model
   model_id: my-model-v1
-  model_version: v1
   batch_size: 8
-  options:
+  model_extra_config:
     dtype: bfloat16
 ```
 
@@ -112,16 +110,14 @@ infer:
 ```yaml
 infer:
   name: openai_compatible
-  base_url: BASE_URL
-  api_key: API_KEY
-  model_id: MODEL_ID
-  timeout_seconds: 120
-  max_retries: 2
+  base_url: null  # 从环境变量 BASE_URL 读取
+  api_key: null  # 从环境变量 API_KEY 读取
+  model_id: null  # 从环境变量 MODEL_ID 读取
   batch_size: 1
 ```
 
 框架不会根据这些字段选择执行模式。具体 baseline 负责校验自身需要的字段：checkpoint 模型通常要求
-`model_path`，OpenAI-compatible 模型通常要求 `base_url` 和 `model_id`，provider 模型读取自己的 key 或 options。
+`model_path`，OpenAI-compatible 模型通常要求 `base_url` 和 `model_id`，provider 模型读取自己的 key 或 model_extra_config。
 
 ## 生命周期与依赖
 

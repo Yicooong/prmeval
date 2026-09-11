@@ -26,5 +26,4 @@ class Infer(ABC):
     def model_info(self) -> dict[str, Any]:
         return {
             "model": self.config.model_id or self.config.model_path or self.config.name,
-            "model_version": self.config.model_version,
         }

@@ -9,15 +9,15 @@ PRMEval Stage 1 可以读取 JSONL 文件，或由 `datasets.load_from_disk()` �
 路径类型自动选择读取方式：
 
 ```yaml
+eval_types: progress
 sampling:
   dataset_name: rbm-1m-ood
   paths:
     - /path/to/trajectories.jsonl
     - /path/to/hf_datasets/rbm-1m-ood
-  eval_types: [progress]
 ```
 
-`dataset_name` 用于评测记录和 sample ID，不参与磁盘路径拼接。相对路径以运行命令时的当前目录为基准。
+`dataset_name` 用于评测记录和 sample ID，也参与默认 `task_name` 的生成。相对路径以运行命令时的当前目录为基准。
 
 ## 数据池
 

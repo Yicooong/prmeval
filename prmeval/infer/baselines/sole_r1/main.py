@@ -36,7 +36,7 @@ class InferenceServer:
             self.generation_config,
         ) = load_model(
             checkpoint_path=str(checkpoint_path),
-            **infer_cfg.options.get("load_model_params", {}),
+            **infer_cfg.model_extra_config.get("load_model_params", {}),
         )
 
     def callback(

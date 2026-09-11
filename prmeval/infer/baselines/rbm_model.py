@@ -37,13 +37,13 @@ class RBMModel(Infer):
         if not config.model_path:
             raise ValueError(f"{config.name} requires infer.model_path")
         self.is_rewind = False
-        self.base_model_path = config.options.get("base_model_path", None)
+        self.base_model_path = config.model_extra_config.get("base_model_path", None)
         if self.base_model_path is None:
-            raise ValueError(f"{config.name} requires base_model_path in options")
+            raise ValueError(f"{config.name} requires base_model_path in model_extra_config")
         self._initialize(config.model_path)
-        self.max_new_tokens = int(config.options.get("max_new_tokens", 128))
-        self.use_multi_image = bool(config.options.get("use_multi_image", True))
-        self.use_per_frame_progress_token = bool(config.options.get("use_per_frame_progress_token", True))
+        self.max_new_tokens = int(config.model_extra_config.get("max_new_tokens", 128))
+        self.use_multi_image = bool(config.model_extra_config.get("use_multi_image", True))
+        self.use_per_frame_progress_token = bool(config.model_extra_config.get("use_per_frame_progress_token", True))
 
     def _initialize(self, model_path: str):
         """Initialize the RBM/ReWiND model wrapper.
@@ -426,7 +426,6 @@ class RBMModel(Infer):
                     sample_id=sample.sample_id,
                     progress=value,
                     model=self.config.model_id or self.config.model_path or self.config.name,
-                    model_version=self.config.model_version,
                 )
             )
         return result

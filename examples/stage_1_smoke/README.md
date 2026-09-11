@@ -7,9 +7,10 @@ Stage 1 支持轨迹 JSONL 或由 `datasets.save_to_disk()` 保存的本地 Hugg
 先在配置中启用采样落盘，供独立进程的后续阶段读取：
 
 ```yaml
-save_samples: true
+sampling:
+  save_samples: true
 output_dir: evaluation_output
-run_name: openai-compatible-remote
+task_name: openai-compatible-remote
 ```
 
 ```bash

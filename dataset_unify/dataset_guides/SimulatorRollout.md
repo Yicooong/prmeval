@@ -43,10 +43,9 @@ sampling:
   dataset_name: simulator_rollout
   paths:
     - /path/to/prmeval-datasets/simulator_rollout
-  eval_types: [progress]
   base_frames: 16
 
-metrics: [progress]
+eval_types: progress
 ```
 
 PRMEval reads `target_progress` from the HF row and samples frames and targets

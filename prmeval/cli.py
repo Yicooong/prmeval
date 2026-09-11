@@ -15,27 +15,31 @@ from .core.schemas import EvaluationRecord
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="prmeval", description="Local and remote robot reward evaluation")
     sub = parser.add_subparsers(dest="command", required=True)
+    make_config = sub.add_parser("make-config", help="Generate a YAML or JSON template from EvalConfig defaults")
+    make_config.add_argument("--format", choices=("yaml", "json"), default="yaml", help="Output format (default: yaml)")
+    make_config.add_argument("--output", help="Save the template to this path; defaults to stdout")
+    make_config.add_argument("--force", action="store_true", help="Overwrite an existing output file")
     run = sub.add_parser("run", help="Run an evaluation")
-    run.add_argument("--config", required=True)
+    run.add_argument("--config", required=True, help="Evaluation config (.yaml, .yml, or .json)")
     run.add_argument("--no-progress", action="store_true", help="Disable terminal progress bars")
-    sample = sub.add_parser("sample", help="Stage 1: prepare samplers; save a bundle when save_samples is enabled")
-    sample.add_argument("--config", required=True)
-    sample.add_argument("--output", help="Optional samples.jsonl destination (requires output_dir and save_samples)")
+    sample = sub.add_parser("sample", help="Stage 1: prepare samplers; save a bundle with sampling.save_samples")
+    sample.add_argument("--config", required=True, help="Evaluation config (.yaml, .yml, or .json)")
+    sample.add_argument("--output", help="Optional samples.jsonl destination (requires sampling.save_samples=True)")
     sample.add_argument("--no-progress", action="store_true", help="Disable terminal progress bars")
     infer = sub.add_parser("infer", help="Stage 2: run a model on sampled data")
-    infer.add_argument("--config", required=True)
+    infer.add_argument("--config", required=True, help="Evaluation config (.yaml, .yml, or .json)")
     infer.add_argument("--samples", help="Optional samples.jsonl source")
     infer.add_argument("--output", help="Optional predictions.jsonl destination (requires output_dir)")
     infer.add_argument("--no-progress", action="store_true", help="Disable terminal progress bars")
     stage_metrics = sub.add_parser("metrics", help="Stage 3: compute configured metrics")
-    stage_metrics.add_argument("--config", required=True)
+    stage_metrics.add_argument("--config", required=True, help="Evaluation config (.yaml, .yml, or .json)")
     stage_metrics.add_argument("--predictions", help="Optional predictions.jsonl source")
     stage_metrics.add_argument("--no-progress", action="store_true", help="Disable terminal progress bars")
     sub.add_parser("list-infers")
     sub.add_parser("list-samplers")
     sub.add_parser("list-metrics")
     validate = sub.add_parser("validate-dataset")
-    validate.add_argument("--config", required=True)
+    validate.add_argument("--config", required=True, help="Evaluation config (.yaml, .yml, or .json)")
     validate_samples = sub.add_parser("validate-samples")
     validate_samples.add_argument("--samples", required=True)
     validate_predictions = sub.add_parser("validate-predictions")
@@ -49,7 +53,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _evaluator(args: argparse.Namespace) -> Evaluator:
     logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stderr)
-    return Evaluator(EvalConfig.from_yaml(args.config), show_progress=not args.no_progress)
+    return Evaluator(EvalConfig.from_file(args.config), show_progress=not args.no_progress)
 
 
 def _load_records(path: Path) -> list[EvaluationRecord]:
@@ -86,8 +90,22 @@ def _metric_summary_for_stdout(summary: dict) -> dict:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
-    if args.command == "list-infers":
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.command == "make-config":
+        rendered = EvalConfig.export_config(format=args.format)
+        if args.output:
+            output = Path(args.output)
+            output.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                with output.open("w" if args.force else "x", encoding="utf-8") as handle:
+                    handle.write(rendered)
+            except FileExistsError:
+                parser.error(f"Output file already exists: {output}; use --force to overwrite")
+            print(f"Config written to {output}")
+        else:
+            print(rendered, end="")
+    elif args.command == "list-infers":
         from .infer.baselines import builtin_infer_names
 
         print("\n".join(sorted(set(INFERS.names()) | set(builtin_infer_names()))))
@@ -96,9 +114,9 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "list-metrics":
         print("\n".join(METRICS.names()))
     elif args.command == "validate-dataset":
-        from .sample import load_hf_trajectory_pool
+        from .sample.utils import load_hf_trajectory_pool
 
-        config = EvalConfig.from_yaml(args.config)
+        config = EvalConfig.from_file(args.config)
         trajectories = load_hf_trajectory_pool(config.sampling)
         print(json.dumps({"valid": True, "trajectories": len(trajectories)}, indent=2))
     elif args.command == "validate-samples":
@@ -109,7 +127,11 @@ def main(argv: list[str] | None = None) -> int:
         source = Path(args.predictions)
         records = _load_records(source)
         identities = [
-            (record.evaluation.dataset.name, record.infer.name if record.infer else None, record.sample_id)
+            (
+                record.sample.dataset_name,
+                record.execution.infer_name if record.execution else None,
+                record.sample.sample_id,
+            )
             for record in records
         ]
         if len(identities) != len(set(identities)):
@@ -118,7 +140,6 @@ def main(argv: list[str] | None = None) -> int:
             json.dumps(
                 {
                     "valid": True,
-                    "schema_version": "bench.record.v1",
                     "records": len(records),
                     "path": str(source),
                 },
@@ -137,7 +158,7 @@ def main(argv: list[str] | None = None) -> int:
             "synthetic_temporal_robustness": "progress_temporal_variation",
         }
         metric_names = args.metrics or sorted(
-            {legacy_metric_names.get(record.evaluation.type, record.evaluation.type) for record in records}
+            {legacy_metric_names.get(record.eval_type, record.eval_type) for record in records}
         )
         payload = {
             "source": str(configured_source),

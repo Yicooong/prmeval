@@ -108,7 +108,7 @@ class ProgressSampler(EvalSampler):
                     indices,
                 ),
                 trajectory=sampled,
-                eval_type=self.eval_type,
+                dataset_name=self.dataset_name,
             )
 
 
@@ -193,7 +193,7 @@ class ProgressTemporalVariationSampler(EvalSampler):
                         indices,
                     ),
                     trajectory=sampled,
-                    eval_type=self.eval_type,
+                    dataset_name=self.dataset_name,
                 )
 
 
@@ -246,7 +246,7 @@ class PolicyRankingSampler(EvalSampler):
                     indices,
                 ),
                 trajectory=sampled,
-                eval_type=self.eval_type,
+                dataset_name=self.dataset_name,
             )
 
 
@@ -292,7 +292,7 @@ class ConfusionMatrixSampler(EvalSampler):
                         indices,
                     ),
                     trajectory=sampled,
-                    eval_type=self.eval_type,
+                    dataset_name=self.dataset_name,
                 )
 
 
@@ -342,5 +342,5 @@ class QualityPreferenceSampler(EvalSampler):
                 ),
                 chosen_trajectory=self._subset_trajectory(chosen, chosen_frames, chosen_indices),
                 rejected_trajectory=self._subset_trajectory(rejected, rejected_frames, rejected_indices),
-                eval_type=self.eval_type,
+                dataset_name=self.dataset_name,
             )

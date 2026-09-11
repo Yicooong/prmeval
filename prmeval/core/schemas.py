@@ -1,4 +1,4 @@
-"""评估数据结构、协议版本及记录状态约束。"""
+"""评估数据结构及记录状态约束。"""
 
 from __future__ import annotations
 
@@ -6,11 +6,9 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-SAMPLE_SCHEMA_VERSION = "bench.record.v1"
-
 
 class FrameworkModel(BaseModel):
-    model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
+    model_config = ConfigDict(extra="forbid")
 
 
 class Trajectory(FrameworkModel):
@@ -32,17 +30,15 @@ class Trajectory(FrameworkModel):
 
 class ProgressSample(FrameworkModel):
     sample_id: str
+    dataset_name: str
     trajectory: Trajectory
-    sample_type: Literal["progress"] = "progress"
-    eval_type: str
 
 
 class PreferenceSample(FrameworkModel):
     sample_id: str
+    dataset_name: str
     chosen_trajectory: Trajectory
     rejected_trajectory: Trajectory
-    sample_type: Literal["preference"] = "preference"
-    eval_type: str
 
 
 EvaluationSample = ProgressSample | PreferenceSample
@@ -62,8 +58,6 @@ class ProgressPrediction(FrameworkModel):
     sample_id: str
     progress: list[Annotated[float, Field(ge=0, le=1)]] = Field(min_length=1)
     model: str
-    model_version: str | None = None
-    raw_response: Any = None
 
 
 class PreferencePrediction(FrameworkModel):
@@ -71,95 +65,42 @@ class PreferencePrediction(FrameworkModel):
     chosen_probability: float = Field(ge=0, le=1)
     preference: Literal["chosen", "rejected", "tie"]
     model: str
-    model_version: str | None = None
-    raw_response: Any = None
 
 
 Prediction = ProgressPrediction | PreferencePrediction
 
 
-class DatasetIdentity(FrameworkModel):
-    """Dataset identity used for metric slicing, independent of loading details."""
-
-    name: str = Field(description="Canonical dataset name, for example rbm-1m-ood")
-    source: str | None = Field(default=None, description="Optional subset or original source name")
-
-
-class EvaluationIdentity(FrameworkModel):
-    type: str = Field(description="Evaluation type, for example progress or policy_ranking")
-    dataset: DatasetIdentity = Field(description="Dataset dimensions associated with this sample")
-
-
-class RecordInputItem(FrameworkModel):
-    """One media item in a request; preference evaluation can contain chosen and rejected items."""
-
-    role: str = Field(default="trajectory", description="Input role such as trajectory, chosen, or rejected")
-    frames: Any = Field(description="FrameReference on disk; temporarily hydrated to an array at runtime")
-    frame_indices: list[int] = Field(default_factory=list, description="Sampled indices in the source sequence")
-    source_id: str | None = Field(default=None, description="Optional source ID for audit and debugging only")
-    data: dict[str, Any] = Field(default_factory=dict, description="Non-core extensions for this input item")
-
-
-class RecordInput(FrameworkModel):
-    task: str = Field(description="Natural-language task supplied to the model")
-    items: list[RecordInputItem] = Field(min_length=1, description="Input items used by this model request")
-
-
-class ValuePayload(FrameworkModel):
-    """Extensible target/prediction payload validated by each metric according to kind."""
-
-    kind: str = Field(description="Payload kind such as progress, rank, or preference")
-    values: list[float] | None = Field(default=None, description="Sequence values such as a progress curve")
-    value: float | None = Field(default=None, description="Single numeric value such as a ground-truth rank")
-    label: str | None = Field(default=None, description="Discrete label such as chosen or successful")
-    probability: float | None = Field(default=None, ge=0, le=1, description="Optional probability prediction")
-
-
-class InferIdentity(FrameworkModel):
-    name: str = Field(description="Registered infer name in the evaluation framework")
-    model: str = Field(description="Local checkpoint or remote model identity used for inference")
-    version: str | None = Field(default=None, description="Optional model or deployment version")
-
-
 class ExecutionInfo(FrameworkModel):
-    status: Literal["success", "error"] = Field(description="Inference status for this sample")
-    error: str | None = Field(default=None, description="Error summary when inference fails")
+    status: Literal["success", "error"]
+    infer_name: str = Field(description="Registered infer implementation used for this execution")
+    model: str | None = Field(default=None, description="Attempted model on failure; success uses prediction.model")
+    error: str | None = None
     raw_response: Any = Field(default=None, description="Unparsed backend response retained when inference fails")
 
 
 class EvaluationRecord(FrameworkModel):
-    """Unified sample/inference record consumed, but not mutated, by metrics."""
+    """A sampled request, its optional prediction, and execution information."""
 
-    # schema_version controls protocol compatibility; execution presence tracks inference state.
-    schema_version: Literal["bench.record.v1"] = Field(
-        default="bench.record.v1", description="Unified record protocol version"
-    )
-    sample_id: str = Field(description="Unique sample ID preserved across all three stages")
-
-    # evaluation/input/target originate in Stage 1 and must be preserved by Stage 2.
-    evaluation: EvaluationIdentity = Field(description="Evaluation type and dataset dimensions")
-    input: RecordInput = Field(description="Model input and sampling information")
-    target: ValuePayload | None = Field(default=None, description="Metric target; never sent to the remote model")
-
-    # infer/prediction/execution are populated by Stage 2 and forbidden on sampled records.
-    infer: InferIdentity | None = Field(default=None, description="Identity of the predicting infer/model")
-    prediction: ValuePayload | None = Field(default=None, description="Model output normalized by its baseline")
-    execution: ExecutionInfo | None = Field(default=None, description="Inference status and optional error response")
+    eval_type: str
+    sample: EvaluationSample
+    prediction: Prediction | None = None
+    execution: ExecutionInfo | None = None
 
     @model_validator(mode="after")
-    def validate_inference_state(self):
-        """校验记录的推理状态: 采样记录不能有结果, 成功必须有预测, 失败必须有错误信息。"""
+    def validate_inference_state(self) -> EvaluationRecord:
         if self.execution is None:
-            if self.infer is not None or self.prediction is not None:
-                raise ValueError("A sampled record cannot contain infer or prediction results")
-            return self
-        if self.infer is None:
-            raise ValueError("An inferred record requires infer information")
-        if self.execution.status == "success" and self.prediction is None:
-            raise ValueError("A successful inferred record requires a prediction")
-        if self.execution.status == "error":
-            if not self.execution.error:
-                raise ValueError("An error inferred record requires an error message")
             if self.prediction is not None:
-                raise ValueError("An error inferred record cannot contain a prediction")
+                raise ValueError("A sampled record need execution info")
+            return self
+        if self.execution.status == "error":
+            if not self.execution.error or not self.execution.error.strip():
+                raise ValueError("An error record requires a non-empty error message")
+            return self
+        if self.prediction is None:
+            raise ValueError("A successful record requires a prediction")
+        if self.prediction.sample_id != self.sample.sample_id:
+            raise ValueError("Prediction sample_id must match sample.sample_id")
+        expected_type = ProgressPrediction if isinstance(self.sample, ProgressSample) else PreferencePrediction
+        if not isinstance(self.prediction, expected_type):
+            raise ValueError(f"{type(self.sample).__name__} requires {expected_type.__name__}")
         return self

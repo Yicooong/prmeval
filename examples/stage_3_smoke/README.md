@@ -1,8 +1,8 @@
 # Metric smoke test
 
-`predictions.jsonl` contains current `bench.record.v1` `EvaluationRecord` rows for metric smoke tests.
-For the canonical unified v1 format and progress-only debugging, use
-`examples/reward_alignment_v1` instead.
+`predictions.jsonl` contains current `EvaluationRecord` rows for metric smoke tests.
+Each row contains the top-level `eval_type`, `sample`, the original `prediction` (including `sample_id` and `model`),
+and `execution`. Metrics read labels directly from the sample trajectories.
 
 Run all metrics found in the file:
 

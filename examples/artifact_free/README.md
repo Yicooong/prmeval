@@ -3,8 +3,9 @@
 复制已有评估 YAML，保留实际数据集和模型配置，删除旧的 `mode` 字段，设置：
 
 ```yaml
+sampling:
+  save_samples: false
 output_dir: null
-save_samples: false
 ```
 
 运行 `python -m prmeval.cli run --config your_config.yaml`，或通过

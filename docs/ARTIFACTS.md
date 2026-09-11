@@ -1,9 +1,9 @@
 # 全流程运行产物说明
 
-PRMEval 使用同一个 `bench.record.v1` `EvaluationRecord` 串联三个阶段。启用全部产物写入时的标准运行目录为：
+PRMEval 使用同一个 `EvaluationRecord` 串联三个阶段。启用全部产物写入时的标准运行目录为：
 
 ```text
-<output_dir>/<run_name-or-default>/
+<output_dir>/<task_name>/
 ├── samples.jsonl
 ├── sample_frames/
 │   └── <sample_id>-<role>.npz
@@ -13,13 +13,16 @@ PRMEval 使用同一个 `bench.record.v1` `EvaluationRecord` 串联三个阶段�
 └── metrics_detail.jsonl
 ```
 
-`save_samples: false`（默认）不落盘 Stage 1 产物，因此没有 `samples.jsonl` 和 `sample_frames/`。
+`output_dir` 默认 `/tmp/prmeval_evaluation_output`；`task_name` 默认
+`{sampling.dataset_name}_{infer.name}_{eval_types}`。
+
+`sampling.save_samples: false`（默认）不落盘 Stage 1 产物，因此没有 `samples.jsonl` 和 `sample_frames/`。
 
 ## Stage 1：Sample
 
-有输出目录且 `save_samples: true` 时，Stage 1 输出 `samples.jsonl` 和 `sample_frames/*.npz`。`samples.jsonl` 每行代表一次实际送入 Infer 的请求，
-而不是一条原始 trajectory。每行都是尚无 `execution` 的 sampled `EvaluationRecord`，包含稳定的 `sample_id`、
-评测与数据集身份、任务、NPZ 引用、采样索引和 Metric 所需的 `target`。
+有输出目录且 `sampling.save_samples: true` 时，Stage 1 输出 `samples.jsonl` 和 `sample_frames/*.npz`。`samples.jsonl` 每行代表一次实际送入 Infer 的请求，
+而不是一条原始 trajectory。每行都是尚无 `execution` 的 sampled `EvaluationRecord`，包含顶层 `eval_type` 和完整的 `sample`：
+`sample_id`、`dataset_name` 及带有任务、NPZ 引用、采样索引和真值标签的轨迹。
 
 一个普通 progress Record 通常引用一个 trajectory NPZ；preference Record 可以分别引用 chosen 和 rejected
 两个 NPZ。NPZ 路径相对于 `samples.jsonl` 所在目录。加载时会验证路径安全、文件 SHA-256、数组键、帧数，
@@ -34,18 +37,18 @@ PRMEval 使用同一个 `bench.record.v1` `EvaluationRecord` 串联三个阶段�
 Stage 2 读取样本文件，或在没有样本文件时消费已准备的 samplers，两者互斥。
 文件来源保留 NPZ 引用，sampler 来源清除帧数组；有输出目录时将补全后的 Record 逐批追加到对应文件。Stage 1 文件不会被原地修改。
 
-- `predictions.jsonl`：只保存成功 Record；增加 `infer`、`prediction` 和成功的 `execution`。
-- `errors.jsonl`：保存失败 Record；`prediction` 为 null，`execution` 包含错误和可选原始响应。
+- `predictions.jsonl`：只保存成功 Record；增加原始 `prediction` 和成功的 `execution`。
+- `errors.jsonl`：保存失败 Record；`prediction` 为 null，`execution` 包含 infer_name、尝试调用的 model、错误和可选原始响应。
 
-断点续跑只把 `predictions.jsonl` 中已有的成功 `sample_id` 当作完成状态。只出现在 `errors.jsonl` 的样本会在
-下次运行中重试。`predictions.jsonl` 中每个 `sample_id` 最多允许一条成功记录。
+断点续跑只把 `predictions.jsonl` 中已有的成功 `sample.sample_id` 当作完成状态。只出现在 `errors.jsonl` 的样本会在
+下次运行中重试。`predictions.jsonl` 中每个 `sample.sample_id` 最多允许一条成功记录。
 
 框架不再生成 run manifest、inference summary 或配置指纹。一个运行目录必须只用于一组固定的数据、采样配置
-和模型配置；配置改变时由调用者切换 `run_name` 或清理旧产物。
+和模型配置；配置改变时由调用者切换 `task_name` 或清理旧产物。
 
 ## Stage 3：Metric
 
-Stage 3 接收内存成功记录或读取成功的 `predictions.jsonl`，从每条 Record 的 `target` 和 `prediction` 计算指标。它不读取原始
+Stage 3 接收内存成功记录或读取成功的 `predictions.jsonl`，从每条 Record 的 `sample` 真值和 `prediction` 计算指标。它不读取原始
 Dataset、NPZ 或模型。
 
 ### `metrics.json`
@@ -80,8 +83,8 @@ Dataset、NPZ 或模型。
 `detail_type: record` 行包含完整的成功 `EvaluationRecord`，并增加该 Record 的逐条 `metrics`。因此数据生命周期是：
 
 ```text
-Stage 1 Record = input + target
-Stage 2 Record = Stage 1 Record + infer + prediction + execution
+Stage 1 Record = eval_type + sample
+Stage 2 Record = eval_type + sample + prediction + execution
 Stage 3 detail = Stage 2 Record + metrics
 ```
 
@@ -113,7 +116,7 @@ completed_ids = predictions.jsonl 中的成功 sample_id
 
 `output_dir: null` 时，不创建输出目录，也不写入采样帧、样本、预测、错误或指标文件。
 输出路径属性均为 `None`；不会读取历史预测检查点，但允许显式读取样本或预测文件。
-`save_samples: true` 不能绕过这个总开关。
+同时设置 `sampling.save_samples: true` 会在配置初始化时被 `model_validator` 拒绝。
 
 Python 的 `run()` 和 `evaluate_metrics()` 始终返回 `metrics`、`coverage`、`predictions`、`details`。
 `metrics` 包含完整逐样本和逐组明细；CLI 与磁盘 `metrics.json` 只保留聚合指标。

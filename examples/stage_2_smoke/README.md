@@ -2,10 +2,10 @@
 
 这个目录现在是 **Stage 2 的输入 bundle**，不是 Stage 2 的模拟输出。
 
-- `samples.jsonl`：3 条 `bench.record.v1` sampled Record，全部尚无 `execution`；
+- `samples.jsonl`：3 条 `EvaluationRecord` sampled Record，全部尚无 `execution`；
 - `sample_frames/*.npz`：Stage 2 实际读取的帧数组。
 
-`samples.jsonl` 中不包含 `infer`、`prediction` 或 `execution`。推理后，这些字段才会出现在指定的 `predictions.jsonl` 中。
+`samples.jsonl` 中的 `prediction` 和 `execution` 均为 null。推理后，这两个字段会填入指定的 `predictions.jsonl` 中。
 
 先验证 Stage 2 输入及 NPZ 校验和：
 
@@ -27,7 +27,7 @@ prmeval infer \
 ```
 
 配置加载时会从环境变量展开服务地址和模型 ID。`--output` 需要配置非空 `output_dir`；
-指标仍写入配置的运行目录。`save_samples` 不影响读取此输入 bundle。
+指标仍写入配置的运行目录。`sampling.save_samples` 不影响读取此输入 bundle。
 如需不落盘推理，设置 `output_dir: null` 并省略 `--output`；CLI 仅输出 summary。
 
 这三组图像只是彩色像素组成的协议测试帧，用于验证 bundle 加载、Base64 图片构造、API 调用、structured output 和结果落盘，不用于评价模型语义能力。

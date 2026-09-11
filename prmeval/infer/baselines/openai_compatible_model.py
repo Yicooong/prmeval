@@ -35,9 +35,9 @@ class RemoteModel(Infer):
             raise ValueError("OpenAI-compatible inference requires infer.base_url")
         if not config.model_id:
             raise ValueError("OpenAI-compatible inference requires infer.model_id")
-        self.model_id = config.model_id or os.getenv("MODEL_ID")
-        self.keep_base_url = bool((config.options or {}).get("keep_base_url", False))
-        self.base_url = normalize_api_base_url(config.base_url or os.getenv("BASE_URL"), self.keep_base_url)
+        self.model_id = config.model_id
+        self.keep_base_url = bool((config.model_extra_config or {}).get("keep_base_url", False))
+        self.base_url = normalize_api_base_url(config.base_url, self.keep_base_url)
         self.api_key = config.api_key or os.getenv("API_KEY") or "EMPTY"
 
         self.client = OpenAI(
@@ -256,7 +256,6 @@ class RemoteModel(Infer):
                     sample_id=sample.sample_id,
                     progress=value,
                     model=self.config.model_id or self.config.model_path or self.config.name,
-                    model_version=self.config.model_version,
                 )
             )
         return result
